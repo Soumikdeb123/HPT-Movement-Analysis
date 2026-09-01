@@ -68,7 +68,7 @@ class HomeScreen extends StatelessWidget {
 
               ElevatedButton.icon(
                 onPressed: () {
-                  print('Select Tennis Video pressed');
+                  debugPrint('Select Tennis Video pressed');
                 },
                 icon: const Icon(Icons.video_file),
                 label: const Text('Select Tennis Video'),
