@@ -31,8 +31,14 @@ class _ImmediateGateway implements AnalysisGateway {
     onProgress(1);
     return const AnalysisResult(
       distanceMetres: 500,
+      leftRightDistanceMetres: 300,
+      forwardBackDistanceMetres: 200,
       averageSpeedKmh: 12,
       peakSpeedKmh: 18,
+      peakAccelerationMetresPerSecondSquared: 3.2,
+      peakDecelerationMetresPerSecondSquared: 3.8,
+      directionChanges: 12,
+      overallEffortLoad: 64,
       speedSamples: [0, 12, 18, 0],
       isPrototype: true,
     );

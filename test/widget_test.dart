@@ -29,7 +29,14 @@ void main() {
 
     expect(find.byKey(const Key('analysis-results')), findsOneWidget);
     expect(find.text('500.0 m'), findsOneWidget);
+    expect(find.text('Left-right movement'), findsOneWidget);
+    expect(find.text('Forward-back movement'), findsOneWidget);
+    expect(find.text('Direction changes'), findsOneWidget);
+    expect(find.text('Peak acceleration'), findsOneWidget);
+    expect(find.text('Peak deceleration'), findsOneWidget);
+    expect(find.text('Overall effort load'), findsOneWidget);
     expect(find.text('Mock data'), findsOneWidget);
+    expect(find.text('Heatmap'), findsNothing);
   });
 }
 
@@ -42,8 +49,14 @@ class _ImmediateGateway implements AnalysisGateway {
     onProgress(1);
     return const AnalysisResult(
       distanceMetres: 500,
+      leftRightDistanceMetres: 300,
+      forwardBackDistanceMetres: 200,
       averageSpeedKmh: 12,
       peakSpeedKmh: 18,
+      peakAccelerationMetresPerSecondSquared: 3.2,
+      peakDecelerationMetresPerSecondSquared: 3.8,
+      directionChanges: 12,
+      overallEffortLoad: 64,
       speedSamples: [0, 12, 18, 0],
       isPrototype: true,
     );

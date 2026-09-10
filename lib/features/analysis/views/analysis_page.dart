@@ -55,8 +55,9 @@ class _AnalysisPageState extends State<AnalysisPage> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'Prototype vertical slice: select a fixed-camera '
-                          'video, configure the analysis and review the result.',
+                          'Player-movement vertical slice: select a fixed-camera '
+                          'video and review directional movement and workload. '
+                          'Ball landing positions are outside the agreed scope.',
                           style: Theme.of(context).textTheme.bodyLarge,
                         ),
                         const SizedBox(height: 24),
@@ -184,9 +185,10 @@ class _OptionsCard extends StatelessWidget {
             const SizedBox(height: 8),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Experimental speed curve'),
+              title: const Text('Experimental workload metrics'),
               subtitle: const Text(
-                'Display only after trajectory and distance validation.',
+                'Show speed, acceleration, deceleration and effort only after '
+                'the movement trajectory has been validated.',
               ),
               value: viewModel.includeExperimentalSpeed,
               onChanged: viewModel.isProcessing
@@ -241,6 +243,8 @@ class _ResultsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final workloadMetricsAvailable = result.speedSamples.isNotEmpty;
+
     return Card(
       key: const Key('analysis-results'),
       child: Padding(
@@ -259,7 +263,29 @@ class _ResultsPanel extends StatelessWidget {
                 if (result.isPrototype) const Chip(label: Text('Mock data')),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 4),
+            const Text(
+              'Player movement and workload only; ball landing positions are '
+              'not included.',
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Directional movement',
+              style: Theme.of(context).textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            _MovementBreakdown(
+              leftRightMetres: result.leftRightDistanceMetres,
+              forwardBackMetres: result.forwardBackDistanceMetres,
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Movement and workload summary',
+              style: Theme.of(context).textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
             LayoutBuilder(
               builder: (context, constraints) {
                 final cardWidth = constraints.maxWidth >= 620
@@ -281,12 +307,12 @@ class _ResultsPanel extends StatelessWidget {
                     SizedBox(
                       width: cardWidth,
                       child: _MetricTile(
-                        label: 'Trajectory',
-                        value: 'Mock path available',
-                        icon: Icons.timeline_outlined,
+                        label: 'Direction changes',
+                        value: '${result.directionChanges}',
+                        icon: Icons.multiple_stop_outlined,
                       ),
                     ),
-                    if (result.speedSamples.isNotEmpty) ...[
+                    if (workloadMetricsAvailable) ...[
                       SizedBox(
                         width: cardWidth,
                         child: _MetricTile(
@@ -305,18 +331,45 @@ class _ResultsPanel extends StatelessWidget {
                           icon: Icons.bolt_outlined,
                         ),
                       ),
+                      SizedBox(
+                        width: cardWidth,
+                        child: _MetricTile(
+                          label: 'Peak acceleration',
+                          value:
+                              '${result.peakAccelerationMetresPerSecondSquared.toStringAsFixed(1)} m/s²',
+                          icon: Icons.trending_up_outlined,
+                        ),
+                      ),
+                      SizedBox(
+                        width: cardWidth,
+                        child: _MetricTile(
+                          label: 'Peak deceleration',
+                          value:
+                              '${result.peakDecelerationMetresPerSecondSquared.toStringAsFixed(1)} m/s²',
+                          icon: Icons.trending_down_outlined,
+                        ),
+                      ),
+                      SizedBox(
+                        width: cardWidth,
+                        child: _MetricTile(
+                          label: 'Overall effort load',
+                          value:
+                              '${result.overallEffortLoad.toStringAsFixed(0)} / 100',
+                          icon: Icons.monitor_heart_outlined,
+                        ),
+                      ),
                     ],
                   ],
                 );
               },
             ),
+            if (workloadMetricsAvailable) ...[
+              const SizedBox(height: 16),
+              _EffortLoadIndicator(value: result.overallEffortLoad),
+              const SizedBox(height: 16),
+              _SpeedProfile(samples: result.speedSamples),
+            ],
             const SizedBox(height: 16),
-            const ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.grid_view_outlined),
-              title: Text('Heatmap'),
-              subtitle: Text('Awaiting backend image output'),
-            ),
             const ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.ondemand_video_outlined),
@@ -324,6 +377,205 @@ class _ResultsPanel extends StatelessWidget {
               subtitle: Text('Awaiting backend video output'),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MovementBreakdown extends StatelessWidget {
+  const _MovementBreakdown({
+    required this.leftRightMetres,
+    required this.forwardBackMetres,
+  });
+
+  final double leftRightMetres;
+  final double forwardBackMetres;
+
+  @override
+  Widget build(BuildContext context) {
+    final maxDistance = leftRightMetres >= forwardBackMetres
+        ? leftRightMetres
+        : forwardBackMetres;
+    final leftRightRatio = maxDistance <= 0
+        ? 0.0
+        : leftRightMetres / maxDistance;
+    final forwardBackRatio = maxDistance <= 0
+        ? 0.0
+        : forwardBackMetres / maxDistance;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _MovementBar(
+              label: 'Left-right movement',
+              value: '${leftRightMetres.toStringAsFixed(1)} m',
+              ratio: leftRightRatio,
+            ),
+            const SizedBox(height: 16),
+            _MovementBar(
+              label: 'Forward-back movement',
+              value: '${forwardBackMetres.toStringAsFixed(1)} m',
+              ratio: forwardBackRatio,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Bars compare the two accumulated directional components. '
+              'They are not percentages of total court distance.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MovementBar extends StatelessWidget {
+  const _MovementBar({
+    required this.label,
+    required this.value,
+    required this.ratio,
+  });
+
+  final String label;
+  final String value;
+  final double ratio;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: label,
+      value: value,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text(label)),
+              Text(value, style: Theme.of(context).textTheme.titleSmall),
+            ],
+          ),
+          const SizedBox(height: 6),
+          LinearProgressIndicator(value: ratio.clamp(0, 1).toDouble()),
+        ],
+      ),
+    );
+  }
+}
+
+class _EffortLoadIndicator extends StatelessWidget {
+  const _EffortLoadIndicator({required this.value});
+
+  final double value;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalisedValue = (value / 100).clamp(0, 1).toDouble();
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Overall effort load — prototype index',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(value: normalisedValue),
+            const SizedBox(height: 6),
+            Text(
+              '${value.toStringAsFixed(0)} / 100. The calculation must be '
+              'validated with the client before coaching use.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SpeedProfile extends StatelessWidget {
+  const _SpeedProfile({required this.samples});
+
+  final List<double> samples;
+
+  @override
+  Widget build(BuildContext context) {
+    var peak = 0.0;
+    for (final sample in samples) {
+      if (sample > peak) {
+        peak = sample;
+      }
+    }
+
+    return Semantics(
+      label: 'Speed profile',
+      value: '${samples.length} samples; peak ${peak.toStringAsFixed(1)} km/h',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Speed profile',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 96,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    for (final sample in samples)
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 3),
+                          child: FractionallySizedBox(
+                            heightFactor: peak <= 0
+                                ? 0
+                                : (sample / peak).clamp(0.02, 1).toDouble(),
+                            alignment: Alignment.bottomCenter,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.primary,
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(4),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Session sample sequence (km/h)',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
         ),
       ),
     );

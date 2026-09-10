@@ -17,8 +17,18 @@ class MockAnalysisGateway implements AnalysisGateway {
 
     return AnalysisResult(
       distanceMetres: 1264.8,
+      leftRightDistanceMetres: 742.5,
+      forwardBackDistanceMetres: 522.3,
       averageSpeedKmh: request.includeExperimentalSpeed ? 14.2 : 0,
       peakSpeedKmh: request.includeExperimentalSpeed ? 23.7 : 0,
+      peakAccelerationMetresPerSecondSquared: request.includeExperimentalSpeed
+          ? 3.8
+          : 0,
+      peakDecelerationMetresPerSecondSquared: request.includeExperimentalSpeed
+          ? 4.1
+          : 0,
+      directionChanges: 47,
+      overallEffortLoad: request.includeExperimentalSpeed ? 78 : 0,
       speedSamples: request.includeExperimentalSpeed
           ? const [0, 8.4, 14.1, 18.7, 12.9, 23.7, 9.6, 0]
           : const [],
