@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'core/theme/app_theme.dart';
-import 'features/analysis/views/analysis_page.dart';
+import 'features/auth/views/auth_page.dart';
 
 class HptApp extends StatelessWidget {
   const HptApp({super.key});
@@ -12,7 +12,7 @@ class HptApp extends StatelessWidget {
       title: 'HPT Player Analysis',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      home: const AnalysisPage(),
+      home: const AuthPage(),
     );
   }
 }

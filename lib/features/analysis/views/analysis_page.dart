@@ -4,6 +4,8 @@ import '../models/analysis_result.dart';
 import '../repositories/analysis_gateway.dart';
 import '../repositories/mock_analysis_gateway.dart';
 import '../view_models/analysis_view_model.dart';
+import '../../auth/views/auth_page.dart';
+import '../../auth/repositories/auth_repository.dart';
 
 class AnalysisPage extends StatefulWidget {
   const AnalysisPage({super.key, this.gateway});
@@ -37,7 +39,22 @@ class _AnalysisPageState extends State<AnalysisPage> {
       animation: viewModel,
       builder: (context, child) {
         return Scaffold(
-          appBar: AppBar(title: const Text('HPT Player Analysis')),
+          appBar: AppBar(
+            title: const Text('HPT Player Analysis'),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  AuthRepository.token = null;
+                  AuthRepository.userEmail = null;
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute<void>(builder: (_) => const AuthPage()),
+                    (_) => false,
+                  );
+                },
+                child: const Text('Back'),
+              ),
+            ],
+          ),
           body: SafeArea(
             child: ListView(
               padding: const EdgeInsets.all(20),
@@ -311,12 +328,6 @@ class _ResultsPanel extends StatelessWidget {
               },
             ),
             const SizedBox(height: 16),
-            const ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.grid_view_outlined),
-              title: Text('Heatmap'),
-              subtitle: Text('Awaiting backend image output'),
-            ),
             const ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.ondemand_video_outlined),

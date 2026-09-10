@@ -5,7 +5,6 @@ class AnalysisResult {
     required this.peakSpeedKmh,
     required this.speedSamples,
     required this.isPrototype,
-    this.heatmapPath,
     this.annotatedVideoPath,
   });
 
@@ -14,6 +13,5 @@ class AnalysisResult {
   final double peakSpeedKmh;
   final List<double> speedSamples;
   final bool isPrototype;
-  final String? heatmapPath;
   final String? annotatedVideoPath;
 }
