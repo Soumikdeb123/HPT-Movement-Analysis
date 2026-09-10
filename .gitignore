@@ -31,7 +31,27 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+/android/build/
 /coverage/
+
+# Local Flutter/Android SDK configuration
+/android/local.properties
+
+# Python player-tracking backend
+/backend/player_tracking/.venv/
+**/__pycache__/
+*.py[cod]
+/.pytest_cache/
+/runtime/
+
+# Local model weights and private/raw video files
+*.pt
+*.onnx
+*.tflite
+*.mp4
+*.mov
+*.avi
+*.mkv
 
 # Symbolication related
 app.*.symbols
