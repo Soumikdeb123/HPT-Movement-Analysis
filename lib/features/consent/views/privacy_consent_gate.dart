@@ -117,12 +117,12 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                                   'request deletion.',
                             ),
                             _NoticeSection(
-                              title: 'Prototype limitation',
+                              title: 'Processing and consent',
                               body:
-                                  'The current build displays mock results and '
-                                  'does not yet process the selected footage. '
-                                  'This screen records an in-app '
-                                  'acknowledgement only and does not replace '
+                                  'Selected videos are uploaded to the configured '
+                                  'analysis server for player tracking. '
+                                  'This screen uses a session-only '
+                                  'acknowledgement and does not replace '
                                   'written consent or organisational approval.',
                               isLast: true,
                             ),

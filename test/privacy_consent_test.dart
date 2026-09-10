@@ -22,7 +22,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('privacy-consent-screen')), findsNothing);
-    expect(find.text('Analyse tennis movement'), findsOneWidget);
+    expect(find.text('Sign in'), findsOneWidget);
   });
 
   testWidgets('under-18 access requires every acknowledgement', (tester) async {
@@ -56,6 +56,6 @@ void main() {
     await tester.tap(continueButton);
     await tester.pumpAndSettle();
 
-    expect(find.text('Analyse tennis movement'), findsOneWidget);
+    expect(find.text('Sign in'), findsOneWidget);
   });
 }
