@@ -73,25 +73,65 @@ def create_app(
     owners = {}
 
     def authenticated_user(request: Request) -> str:
-        if configured_settings.auth_url is None:
-            return "local-test"
+        if not configured_settings.auth_url:
+            raise HTTPException(
+                status_code=503,
+                detail="Authentication service is not configured.",
+            )
+
         authorization = request.headers.get("authorization", "")
+
         if not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Please sign in.")
+            raise HTTPException(
+                status_code=401,
+                detail="Please sign in.",
+            )
+
         try:
             upstream = UrlRequest(
-                configured_settings.auth_url.rstrip("/") + "/api/auth/session",
-                headers={"Authorization": authorization},
+                configured_settings.auth_url.rstrip("/")
+                + "/api/auth/session",
+                headers={
+                    "Authorization": authorization,
+                },
             )
+
             with urlopen(upstream, timeout=10) as response:
-                email = json.load(response).get("email")
-            if not isinstance(email, str) or not email:
-                raise HTTPException(status_code=401, detail="Invalid session. Please sign in again.")
-            return email
+                session = json.load(response)
+
+            if not isinstance(session, dict):
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid session. Please sign in again.",
+                )
+
+            user_id = session.get("id")
+
+            if type(user_id) is not int or user_id <= 0:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid session. Please sign in again.",
+                )
+
+            return str(user_id)
+
         except HTTPError as error:
-            raise HTTPException(status_code=401, detail="Session expired. Please sign in again.") from error
+            if error.code in (401, 403):
+                raise HTTPException(
+                    status_code=401,
+                    detail="Session expired or account unavailable.",
+                ) from error
+
+            raise HTTPException(
+                status_code=503,
+                detail="Authentication service unavailable.",
+            ) from error
+
         except (URLError, TimeoutError, ValueError) as error:
-            raise HTTPException(status_code=503, detail="Authentication service unavailable.") from error
+            raise HTTPException(
+                status_code=503,
+                detail="Authentication service unavailable.",
+            ) from error
 
     def check_owner(job_id: str, user: str):
         if owners.get(job_id) != user:
