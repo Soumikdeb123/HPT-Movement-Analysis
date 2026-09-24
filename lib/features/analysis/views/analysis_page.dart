@@ -11,6 +11,7 @@ import '../repositories/analysis_gateway.dart';
 import '../repositories/http_analysis_gateway.dart';
 import '../services/analysis_video_picker.dart';
 import '../view_models/analysis_view_model.dart';
+import '../../auth/views/account_page.dart';
 
 class AnalysisPage extends StatefulWidget {
   const AnalysisPage({
@@ -54,6 +55,22 @@ class _AnalysisPageState extends State<AnalysisPage> {
     super.dispose();
   }
 
+  Future<void> _openAccount() async {
+    final shouldSignOut = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => const AccountPage(),
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (shouldSignOut == true) {
+      widget.onSignOut?.call();
+    } else {
+      setState(() {});
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -63,15 +80,29 @@ class _AnalysisPageState extends State<AnalysisPage> {
           appBar: AppBar(
             title: const Text('HPT Player Analysis'),
             actions: [
-              if (widget.onSignOut != null)
-                IconButton(
-                  tooltip: 'Sign out',
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: IconButton(
+                  tooltip: 'Profile',
                   onPressed:
-                      viewModel.isProcessing || viewModel.isClearingResult
+                      viewModel.isProcessing ||
+                          viewModel.isClearingResult ||
+                          viewModel.isSelectingVideo
                       ? null
-                      : widget.onSignOut,
-                  icon: const Icon(Icons.logout),
+                      : _openAccount,
+                  icon: CircleAvatar(
+                    radius: 18,
+                    backgroundColor: Theme.of(context)
+                        .colorScheme
+                        .primaryContainer,
+                    child: Icon(
+                      Icons.person,
+                      size: 24,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+                  ),
                 ),
+              ),
             ],
           ),
           body: SafeArea(
@@ -247,11 +278,10 @@ class _ScopeCard extends StatelessWidget {
             const ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.science_outlined),
-              title: Text('Pixel-based demonstration'),
+              title: Text('Experimental court calibration'),
               subtitle: Text(
-                'Results use image pixels, px/s and px/s squared. Effort is an '
-                'unvalidated movement proxy, not metabolic power. Court '
-                'estimates are retained separately in JSON when available.',
+                'Court lines are detected and mapped to standard tennis-court '
+                'dimensions. Results are estimates until manually validated.',
               ),
             ),
             const ListTile(
@@ -610,16 +640,16 @@ class _MetricGrid extends StatelessWidget {
             SizedBox(
               width: cardWidth,
               child: _MetricTile(
-                label: 'Pixel effort index (demo)',
+                label: 'Overall effort load',
                 value: _formatMetric(
                   player.overallEffort.value,
                   player.overallEffort.unit,
                 ),
-                icon: Icons.science_outlined,
+                icon: Icons.monitor_heart_outlined,
                 status: player.overallEffort.status,
                 note:
                     player.overallEffort.note ??
-                    'Experimental motion proxy, not physiological load. Client validation pending.',
+                    'Effort formula awaiting client validation.',
               ),
             ),
             SizedBox(
@@ -1168,7 +1198,7 @@ class _DirectionalMovement extends StatelessWidget {
             Text(
               metres
                   ? 'Accumulated court-axis distances; diagonal movement contributes to both axes. Their sum is not total distance.'
-                  : 'Pixel demonstration mode. Horizontal/vertical image movement is not real-world court left-right/forward-back distance.',
+                  : 'Court mapping is unavailable. Image-axis movement cannot yet represent court left-right or forward-back distance.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],

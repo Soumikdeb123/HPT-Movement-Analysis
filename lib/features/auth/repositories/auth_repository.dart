@@ -23,6 +23,11 @@ class AuthRepository {
   static String? token;
   static String? userEmail;
 
+  static void clearSession() {
+    token = null;
+    userEmail = null;
+  }
+
   Future<void> register({
     required String username,
     required String email,
@@ -32,11 +37,21 @@ class AuthRepository {
       throw const AuthException('Please enter your username.');
     }
 
-    await _post(registerPath, {'email': email, 'password': password});
+    await _post(registerPath, {
+      'username': username.trim(),
+      'email': email.trim(),
+      'password': password,
+    });
   }
 
-  Future<void> login({required String email, required String password}) async {
-    final data = await _post(loginPath, {'email': email, 'password': password});
+  Future<void> login({
+    required String email,
+    required String password,
+  }) async {
+    final data = await _post(loginPath, {
+      'email': email.trim(),
+      'password': password,
+    });
 
     final receivedToken = data['token'];
 
@@ -49,9 +64,10 @@ class AuthRepository {
     token = receivedToken;
 
     final receivedEmail = data['email'];
+
     userEmail = receivedEmail is String && receivedEmail.isNotEmpty
         ? receivedEmail
-        : email;
+        : email.trim();
   }
 
   Future<Map<String, dynamic>> _post(
@@ -68,7 +84,9 @@ class AuthRepository {
         body,
       ).timeout(const Duration(seconds: 20));
     } on TimeoutException {
-      throw const AuthException('The request timed out. Please try again.');
+      throw const AuthException(
+        'The request timed out. Please try again.',
+      );
     } on SocketException {
       throw const AuthException(
         'Cannot connect to the server. Check the address and network.',
@@ -91,39 +109,38 @@ class AuthRepository {
     String path,
     Map<String, String> body,
   ) async {
-    final request = await client.postUrl(Uri.parse('$baseUrl$path'));
+    final request = await client.postUrl(
+      Uri.parse('$baseUrl$path'),
+    );
 
-    // 登录请求不跟随重定向，避免把凭据发送到其他地址。
     request.followRedirects = false;
     request.headers.contentType = ContentType.json;
     request.write(jsonEncode(body));
 
     final response = await request.close();
-    final text = await response.transform(utf8.decoder).join();
+    final responseText = await response.transform(utf8.decoder).join();
 
-    Map<String, dynamic> data = {};
+    Map<String, dynamic> data;
 
-    if (text.trim().isNotEmpty) {
-      try {
-        final decoded = jsonDecode(text);
-        if (decoded is Map<String, dynamic>) {
-          data = decoded;
-        }
-      } on FormatException {
-        throw AuthException(
-          'The server returned an unexpected response '
-          '(HTTP ${response.statusCode}). Check the API address.',
-        );
+    try {
+      final decoded = jsonDecode(responseText);
+
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException();
       }
+
+      data = decoded;
+    } on FormatException {
+      throw AuthException(
+        'Unexpected server response '
+        '(HTTP ${response.statusCode}). Check the API address.',
+      );
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      final message = data['error'] ?? data['message'];
-
       throw AuthException(
-        message is String && message.isNotEmpty
-            ? message
-            : 'Request failed (HTTP ${response.statusCode}).',
+        (data['error'] ?? data['message'] ?? 'Request failed.')
+            .toString(),
       );
     }
 
