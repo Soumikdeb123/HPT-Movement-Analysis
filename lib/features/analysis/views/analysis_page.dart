@@ -310,7 +310,13 @@ class _ResultsPanel extends StatelessWidget {
                 );
               },
             ),
+
+            if (result.speedSamples.isNotEmpty) ...[
+             const SizedBox(height: 16),
+            _SpeedLineChart(samples: result.speedSamples),
+            ],
             const SizedBox(height: 16),
+            
             const ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.grid_view_outlined),
@@ -370,6 +376,113 @@ class _MetricTile extends StatelessWidget {
     );
   }
 }
+
+class _SpeedLineChart extends StatelessWidget {
+  const _SpeedLineChart({required this.samples});
+
+  final List<double> samples;
+
+  @override
+  Widget build(BuildContext context) {
+    if (samples.length < 2) {
+      return const SizedBox.shrink();
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Speed over time',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Experimental speed samples from the player-tracking analysis.',
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              height: 220,
+              child: CustomPaint(
+                painter: _SpeedChartPainter(
+                  samples: samples,
+                  lineColor: Theme.of(context).colorScheme.primary,
+                  gridColor: Theme.of(context).colorScheme.outlineVariant,
+                ),
+                child: const SizedBox.expand(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SpeedChartPainter extends CustomPainter {
+  _SpeedChartPainter({
+    required this.samples,
+    required this.lineColor,
+    required this.gridColor,
+  });
+
+  final List<double> samples;
+  final Color lineColor;
+  final Color gridColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (samples.length < 2) return;
+
+    final maxSpeed = samples.reduce((a, b) => a > b ? a : b);
+
+    if (maxSpeed <= 0) return;
+
+    final gridPaint = Paint()
+      ..color = gridColor
+      ..strokeWidth = 1;
+
+    final linePaint = Paint()
+      ..color = lineColor
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke;
+
+    // Draw horizontal guide lines.
+    for (var i = 0; i <= 4; i++) {
+      final y = size.height * i / 4;
+      canvas.drawLine(
+        Offset(0, y),
+        Offset(size.width, y),
+        gridPaint,
+      );
+    }
+
+    final path = Path();
+
+    for (var i = 0; i < samples.length; i++) {
+      final x = size.width * i / (samples.length - 1);
+      final y = size.height - (samples[i] / maxSpeed * size.height);
+
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+
+    canvas.drawPath(path, linePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _SpeedChartPainter oldDelegate) {
+    return oldDelegate.samples != samples ||
+        oldDelegate.lineColor != lineColor ||
+        oldDelegate.gridColor != gridColor;
+  }
+}
+
 
 class _ErrorPanel extends StatelessWidget {
   const _ErrorPanel({required this.message});
