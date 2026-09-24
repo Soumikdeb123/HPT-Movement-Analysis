@@ -1,7 +1,7 @@
 const path = require('path');
 
 require('dotenv').config({
-    path: path.join(__dirname, '.env')
+  path: path.join(__dirname, '..', '.env'),
 });
 
 const express = require('express');
@@ -15,13 +15,14 @@ app.use(express.json({ limit: '100kb' }));
 app.get('/health', async (req, res) => {
     try {
         await db.query('SELECT 1');
+
         res.json({
             message: 'Backend is running',
             database: 'connected'
         });
-    } catch (error) {
+    } catch (_) {
         res.status(503).json({
-            error: 'Database connection failed'
+            error: 'Database connection failed.'
         });
     }
 });
@@ -29,65 +30,60 @@ app.get('/health', async (req, res) => {
 async function start() {
     try {
         if (!process.env.TOKEN || process.env.TOKEN.length < 32) {
-            throw new Error(' ');
+            throw new Error(
+                'TOKEN must contain at least 32 characters.'
+            );
         }
 
-        await db.query('SELECT id FROM users LIMIT 1');
+        await db.query(
+            'SELECT id, username, token_version FROM users LIMIT 1'
+        );
 
-        const authRouter = require('./routes/auth');
-        const verifyToken = require('./middleware/verifyToken');
-        app.get('/api/auth/session', verifyToken, async (req, res) => {
-            try {
-                const [users] = await db.query(
-                    'SELECT email FROM users WHERE email = ? AND status != ?',
-                    [req.user.email, 'deleted']
-                );
-                if (!users.length) return res.status(401).json({ error: 'Invalid session' });
-                res.json({ email: users[0].email });
-            } catch (_) {
-                res.status(503).json({ error: 'Authentication unavailable' });
-            }
-        });
-
-        app.use('/api/auth', (req, res, next) => {
-            const allowed =
-                req.method === 'POST' &&
-                ['/signIn', '/login'].includes(req.path);
-
-            if (!allowed) {
-                return res.status(404).json({
-                    error: 'This endpoint is not enabled'
-                });
-            }
-
-            next();
-        }, authRouter);
+        app.use('/api/auth', require('./routes/auth'));
 
         app.use((error, req, res, next) => {
             if (error.type === 'entity.parse.failed') {
                 return res.status(400).json({
-                    error: 'Invalid JSON'
+                    error: 'Invalid JSON.'
                 });
             }
 
-            console.error(error.message);
-            res.status(500).json({
-                error: 'Internal server error'
+            if (error.code === 'ER_DUP_ENTRY') {
+                return res.status(409).json({
+                    error: 'This email is already registered.'
+                });
+            }
+
+            const status =
+                Number.isInteger(error.status) &&
+                error.status >= 400 &&
+                error.status < 500
+                    ? error.status
+                    : 500;
+
+            if (status === 500) {
+                console.error(error);
+            }
+
+            res.status(status).json({
+                error: status === 500
+                    ? 'Internal server error.'
+                    : error.message
             });
         });
 
         const server = app.listen(port, '0.0.0.0', () => {
-            console.log(`http://localhost:${port}`);
-            console.log('Connection Successful');
+            console.log(
+                `Backend running at http://localhost:${port}`
+            );
         });
 
-        server.on('error', (error) => {
-            console.error('Failed', error.message);
+        server.on('error', error => {
+            console.error(error);
             process.exit(1);
         });
     } catch (error) {
-        console.error('Start Failed');
-        console.dir(error, { depth: null });
+        console.error('Start failed:', error.message);
         await db.end();
         process.exitCode = 1;
     }
