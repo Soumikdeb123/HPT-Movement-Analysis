@@ -18,6 +18,7 @@ class AnalysisJob:
     output_dir: Path
     original_filename: str
     target_player: str
+    input_video: Dict
     status: str = "queued"
     progress: float = 0.0
     result: Optional[Dict] = None
@@ -37,6 +38,7 @@ class AnalysisJob:
                 "progress": self.progress,
                 "originalFilename": self.original_filename,
                 "targetPlayer": self.target_player,
+                "inputVideo": dict(self.input_video),
                 "result": result,
                 "error": self.error,
             }
@@ -54,7 +56,11 @@ class AnalysisJobManager:
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
 
     def create_job(
-        self, input_path: Path, original_filename: str, target_player: str
+        self,
+        input_path: Path,
+        original_filename: str,
+        target_player: str,
+        input_video: Dict,
     ) -> AnalysisJob:
         job_id = uuid4().hex
         job_root = self.runtime_dir / job_id
@@ -70,6 +76,7 @@ class AnalysisJobManager:
             output_dir=output_dir,
             original_filename=original_filename,
             target_player=target_player,
+            input_video=input_video,
         )
         with self._jobs_lock:
             self.jobs[job_id] = job

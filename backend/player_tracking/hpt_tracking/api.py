@@ -13,6 +13,11 @@ from fastapi.responses import FileResponse
 from .config import Settings
 from .jobs import AnalysisJobManager
 from .tracking_engine import PrototypeTrackingEngine, TrackingEngine
+from .video_validation import (
+    OpenCvVideoProbe,
+    VideoProbe,
+    VideoValidationError,
+)
 
 
 ALLOWED_VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
@@ -22,8 +27,10 @@ CHUNK_SIZE = 1024 * 1024
 def create_app(
     settings: Optional[Settings] = None,
     engine: Optional[TrackingEngine] = None,
+    video_probe: Optional[VideoProbe] = None,
 ) -> FastAPI:
     configured_settings = settings or Settings.from_environment()
+    configured_video_probe = video_probe or OpenCvVideoProbe()
     if engine is None:
         ultralytics_config_dir = configured_settings.runtime_dir / "ultralytics"
         ultralytics_config_dir.mkdir(parents=True, exist_ok=True)
@@ -127,10 +134,30 @@ def create_app(
             shutil.rmtree(job_root, ignore_errors=True)
             raise HTTPException(status_code=400, detail="The selected video is empty.")
 
+        original_filename = Path(video.filename or f"video{suffix}").name
+        try:
+            input_video = configured_video_probe.probe(
+                video_path=input_path,
+                original_filename=original_filename,
+            )
+        except VideoValidationError as error:
+            # Rejected uploads must not remain in the local runtime directory.
+            shutil.rmtree(job_root, ignore_errors=True)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(error),
+            ) from error
+        except Exception:
+            # Unexpected probe failures are server errors, but their temporary
+            # files still need the same cleanup as normal validation failures.
+            shutil.rmtree(job_root, ignore_errors=True)
+            raise
+
         job = request.app.state.job_manager.create_job(
             input_path=input_path,
-            original_filename=Path(video.filename or f"video{suffix}").name,
+            original_filename=original_filename,
             target_player=target_player,
+            input_video=input_video.to_dict(),
         )
         return job.snapshot()
 
