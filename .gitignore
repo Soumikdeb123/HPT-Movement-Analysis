@@ -46,3 +46,16 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# HPT Python backend
+backend/player_tracking/venv/
+backend/player_tracking/.venv/
+**/__pycache__/
+*.pyc
+
+# HPT analysis runtime/generated outputs
+runtime/
+analyzed_video.mp4
+
+# Local machine configuration
+android/local.properties
