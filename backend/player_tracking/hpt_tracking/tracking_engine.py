@@ -13,6 +13,7 @@ from typing import Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 
 from .court_geometry import CourtCalibration, CourtDetector
 from .metrics import TrajectorySample, analyse_trajectory
+from .pixel_effort import pixel_effort
 
 
 ProgressCallback = Callable[[float], None]
@@ -399,9 +400,10 @@ class YuchenPrototypeTrackingEngine:
 
         players = []
         for track in primary_tracks:
+            court_metrics = None
             if calibration is not None and track.court_trajectory:
                 trajectory = self._smooth_trajectory(track.court_trajectory)
-                metrics = analyse_trajectory(
+                court_metrics = analyse_trajectory(
                     trajectory,
                     fps,
                     minimum_step=0.08,
@@ -412,19 +414,24 @@ class YuchenPrototypeTrackingEngine:
                         "standard doubles-court dimensions; not manually validated."
                     ),
                 )
-            else:
-                trajectory = self._smooth_trajectory(track.image_trajectory)
-                metrics = analyse_trajectory(trajectory, fps)
+            # Supervisor demo: primary outputs use image pixels consistently.
+            # Retain court estimates separately rather than relabelling metres as pixels.
+            trajectory = self._smooth_trajectory(track.image_trajectory)
+            metrics = analyse_trajectory(trajectory, fps)
+            metrics["overallEffort"] = pixel_effort(track.image_trajectory, fps)
             players.append(
                 {
                     "trackId": str(track.track_id),
                     "trackedFrames": len(track.image_trajectory),
                     **metrics,
+                    "courtMetrics": court_metrics,
                 }
             )
 
         progress_callback(1.0)
         warnings = [
+            "Pixel demonstration mode: displayed positions, distances and speed use image units. Court estimates, if available, are retained separately in JSON.",
+            "Effort is an unvalidated pixel-motion proxy, not physiological workload. Do not compare across cameras, resolutions or unequal durations. Long tracking gaps are excluded from effort.",
             "Tracking is based on the team's Yuchen-supplied Playertracking prototype.",
             f"Only the selected {target_player}-court athlete is reported.",
             "Player association may still lose or switch identities after occlusion.",

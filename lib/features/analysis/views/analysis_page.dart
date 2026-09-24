@@ -247,10 +247,11 @@ class _ScopeCard extends StatelessWidget {
             const ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.science_outlined),
-              title: Text('Experimental court calibration'),
+              title: Text('Pixel-based demonstration'),
               subtitle: Text(
-                'Court lines are detected and mapped to standard tennis-court '
-                'dimensions. Results are estimates until manually validated.',
+                'Results use image pixels, px/s and px/s squared. Effort is an '
+                'unvalidated movement proxy, not metabolic power. Court '
+                'estimates are retained separately in JSON when available.',
               ),
             ),
             const ListTile(
@@ -609,16 +610,16 @@ class _MetricGrid extends StatelessWidget {
             SizedBox(
               width: cardWidth,
               child: _MetricTile(
-                label: 'Overall effort load',
+                label: 'Pixel effort index (demo)',
                 value: _formatMetric(
                   player.overallEffort.value,
                   player.overallEffort.unit,
                 ),
-                icon: Icons.monitor_heart_outlined,
+                icon: Icons.science_outlined,
                 status: player.overallEffort.status,
                 note:
                     player.overallEffort.note ??
-                    'Effort formula awaiting client validation.',
+                    'Experimental motion proxy, not physiological load. Client validation pending.',
               ),
             ),
             SizedBox(
@@ -1167,7 +1168,7 @@ class _DirectionalMovement extends StatelessWidget {
             Text(
               metres
                   ? 'Accumulated court-axis distances; diagonal movement contributes to both axes. Their sum is not total distance.'
-                  : 'Court mapping is unavailable. Image-axis movement cannot yet represent court left-right or forward-back distance.',
+                  : 'Pixel demonstration mode. Horizontal/vertical image movement is not real-world court left-right/forward-back distance.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],

@@ -43,7 +43,8 @@ void main() {
     expect(find.text('Uncalibrated'), findsOneWidget);
     expect(find.text('Heatmap'), findsNothing);
     expect(find.text('Directional movement'), findsOneWidget);
-    expect(find.text('Overall effort load'), findsOneWidget);
+    expect(find.text('Pixel effort index (demo)'), findsOneWidget);
+    expect(find.text('10.0 AU'), findsOneWidget);
     expect(find.byKey(const Key('export-csv-button')), findsOneWidget);
     expect(find.byKey(const Key('export-json-button')), findsOneWidget);
     expect(find.byKey(const Key('export-video-button')), findsOneWidget);
@@ -85,6 +86,12 @@ class _ImmediateGateway implements AnalysisGateway {
       'players': [
         {
           'trackId': '0',
+          'overallEffort': {
+            'status': 'experimental',
+            'value': 10,
+            'unit': 'AU',
+            'note': 'Unvalidated pixel-motion proxy.',
+          },
           'movementPath': {
             'status': 'experimental',
             'coordinateSystem': 'image_pixels',

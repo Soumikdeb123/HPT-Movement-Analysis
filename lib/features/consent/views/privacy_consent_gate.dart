@@ -94,7 +94,8 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                                   'including left-right and forward-back '
                                   'movement, distance, speed, acceleration, '
                                   'deceleration, direction changes and overall '
-                                  'effort.',
+                                  'an experimental pixel-motion effort index '
+                                  '(not a physiological measurement).',
                             ),
                             _NoticeSection(
                               title: 'Purpose and access',
