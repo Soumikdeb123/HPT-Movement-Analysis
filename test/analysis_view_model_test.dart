@@ -24,6 +24,7 @@ void main() {
 
     expect(viewModel.status, AnalysisStatus.completed);
     expect(viewModel.progress, 1);
+    expect(viewModel.validatedVideoMetadata?.codecName, 'H.264 (AVC)');
     expect(viewModel.selectedPlayer?.totalDistance.value, 500);
     expect(viewModel.selectedPlayer?.totalDistance.unit, 'px');
 
@@ -86,10 +87,12 @@ class _ImmediateGateway implements AnalysisGateway {
   @override
   Future<AnalysisResult> analyseVideo(
     AnalysisRequest request, {
+    required VideoValidatedCallback onVideoValidated,
     required ProgressCallback onProgress,
     required AnalysisCancellationToken cancellationToken,
   }) async {
     expect(request.videoName, 'client-video.mp4');
+    onVideoValidated(InputVideoMetadata.fromJson(_testInputVideoJson));
     onProgress(0.5);
     onProgress(1);
     return _testResult;
@@ -115,6 +118,7 @@ class _CancellableGateway implements AnalysisGateway {
   @override
   Future<AnalysisResult> analyseVideo(
     AnalysisRequest request, {
+    required VideoValidatedCallback onVideoValidated,
     required ProgressCallback onProgress,
     required AnalysisCancellationToken cancellationToken,
   }) {
@@ -135,31 +139,52 @@ class _CancellableGateway implements AnalysisGateway {
   Future<void> deleteAnalysis(String analysisId) async {}
 }
 
-final _testResult = AnalysisResult.fromJson(const {
-  'calibrationStatus': 'uncalibrated',
-  'selectedTrackId': '7',
-  'players': [
-    {
-      'trackId': '7',
-      'movementPath': {
-        'status': 'experimental',
-        'coordinateSystem': 'image_pixels',
-        'points': [
-          {'timeSeconds': 0.0, 'x': 0.0, 'y': 0.0},
-          {'timeSeconds': 1.0, 'x': 3.0, 'y': 4.0},
-        ],
+final _testResult = AnalysisResult.fromJson(
+  const {
+    'calibrationStatus': 'uncalibrated',
+    'selectedTrackId': '7',
+    'players': [
+      {
+        'trackId': '7',
+        'movementPath': {
+          'status': 'experimental',
+          'coordinateSystem': 'image_pixels',
+          'points': [
+            {'timeSeconds': 0.0, 'x': 0.0, 'y': 0.0},
+            {'timeSeconds': 1.0, 'x': 3.0, 'y': 4.0},
+          ],
+        },
+        'totalDistance': {'status': 'experimental', 'value': 500, 'unit': 'px'},
+        'speed': {
+          'status': 'experimental',
+          'average': 12,
+          'peak': 18,
+          'unit': 'px/s',
+        },
+        'acceleration': {'status': 'unavailable'},
+        'deceleration': {'status': 'unavailable'},
+        'directionChanges': {'status': 'unavailable'},
       },
-      'totalDistance': {'status': 'experimental', 'value': 500, 'unit': 'px'},
-      'speed': {
-        'status': 'experimental',
-        'average': 12,
-        'peak': 18,
-        'unit': 'px/s',
-      },
-      'acceleration': {'status': 'unavailable'},
-      'deceleration': {'status': 'unavailable'},
-      'directionChanges': {'status': 'unavailable'},
-    },
-  ],
-  'warnings': [],
-}, analysisId: 'test-analysis');
+    ],
+    'warnings': [],
+  },
+  analysisId: 'test-analysis',
+  inputVideoJson: _testInputVideoJson,
+);
+
+const _testInputVideoJson = <String, dynamic>{
+  'originalFilename': 'client-video.mp4',
+  'extension': '.mp4',
+  'sizeBytes': 1024,
+  'codecTag': 'avc1',
+  'codecName': 'H.264 (AVC)',
+  'widthPixels': 1920,
+  'heightPixels': 1080,
+  'framesPerSecond': 30.0,
+  'frameCount': 300,
+  'durationSeconds': 10.0,
+  'decodedSampleFrames': 3,
+  'requestedSampleFrames': 3,
+  'compatibilityStatus': 'compatible',
+  'warnings': <String>[],
+};

@@ -42,6 +42,7 @@ class HttpAnalysisGateway implements AnalysisGateway {
   @override
   Future<AnalysisResult> analyseVideo(
     AnalysisRequest request, {
+    required VideoValidatedCallback onVideoValidated,
     required ProgressCallback onProgress,
     required AnalysisCancellationToken cancellationToken,
   }) async {
@@ -75,6 +76,17 @@ class HttpAnalysisGateway implements AnalysisGateway {
       );
     }
     cancellationToken.attachAnalysisId(analysisId);
+
+    // A successful create response means the backend has already opened and
+    // sampled the video. Report that transition before polling the analysis.
+    final createdInputVideo = snapshot['inputVideo'];
+    if (createdInputVideo is Map) {
+      onVideoValidated(
+        InputVideoMetadata.fromJson(
+          Map<String, dynamic>.from(createdInputVideo),
+        ),
+      );
+    }
 
     while (true) {
       if (cancellationToken.isCancellationRequested) {

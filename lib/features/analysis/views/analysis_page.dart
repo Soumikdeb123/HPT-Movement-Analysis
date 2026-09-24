@@ -75,6 +75,13 @@ class _AnalysisPageState extends State<AnalysisPage> {
                         ),
                         const SizedBox(height: 24),
                         _VideoCard(viewModel: viewModel),
+                        if (viewModel.result == null &&
+                            viewModel.validatedVideoMetadata != null) ...[
+                          const SizedBox(height: 16),
+                          _InputVideoMetadataCard(
+                            metadata: viewModel.validatedVideoMetadata!,
+                          ),
+                        ],
                         const SizedBox(height: 16),
                         _TargetPlayerCard(viewModel: viewModel),
                         const SizedBox(height: 16),
@@ -92,6 +99,7 @@ class _AnalysisPageState extends State<AnalysisPage> {
                           const SizedBox(height: 24),
                           _ProgressPanel(
                             progress: viewModel.progress,
+                            isValidating: viewModel.isValidating,
                             isCancelling: viewModel.isCancelling,
                             onCancel: viewModel.cancelAnalysis,
                           ),
@@ -143,9 +151,14 @@ class _VideoCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final selectedVideo = viewModel.selectedVideo;
     final videoStatus = switch (viewModel.status) {
-      AnalysisStatus.processing ||
-      AnalysisStatus.cancelling => 'Uploading and analysing...',
+      AnalysisStatus.validating => 'Checking compatibility...',
+      AnalysisStatus.processing => 'Compatible • Analysing...',
+      AnalysisStatus.cancelling => 'Cancelling...',
       AnalysisStatus.completed || AnalysisStatus.clearingResult => 'Compatible',
+      AnalysisStatus.failed =>
+        viewModel.validatedVideoMetadata == null
+            ? 'Not compatible'
+            : 'Compatible • Analysis failed',
       _ => 'Ready to validate',
     };
     return Card(
@@ -300,11 +313,13 @@ class _TargetPlayerCard extends StatelessWidget {
 class _ProgressPanel extends StatelessWidget {
   const _ProgressPanel({
     required this.progress,
+    required this.isValidating,
     required this.isCancelling,
     required this.onCancel,
   });
 
   final double progress;
+  final bool isValidating;
   final bool isCancelling;
   final VoidCallback onCancel;
 
@@ -314,8 +329,12 @@ class _ProgressPanel extends StatelessWidget {
     final percentage = (progress * 100).round();
 
     return Semantics(
-      label: 'Analysis progress',
-      value: hasMeasuredProgress ? '$percentage percent' : 'Starting',
+      label: isValidating ? 'Video compatibility check' : 'Analysis progress',
+      value: isValidating
+          ? 'Checking'
+          : hasMeasuredProgress
+          ? '$percentage percent'
+          : 'Starting',
       child: Card(
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -325,14 +344,16 @@ class _ProgressPanel extends StatelessWidget {
               Text(
                 isCancelling
                     ? 'Cancelling analysis…'
+                    : isValidating
+                    ? 'Checking video compatibility…'
                     : hasMeasuredProgress
                     ? 'Processing video: $percentage%'
-                    : 'Uploading and starting analysis…',
+                    : 'Video compatible • Starting analysis…',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 12),
               LinearProgressIndicator(
-                value: hasMeasuredProgress ? progress : null,
+                value: !isValidating && hasMeasuredProgress ? progress : null,
               ),
               const SizedBox(height: 8),
               const Text(
@@ -457,9 +478,6 @@ class _InputVideoMetadataCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final codec = metadata.codecTag == 'unknown'
-        ? metadata.codecName
-        : '${metadata.codecName} (${metadata.codecTag})';
 
     return DecoratedBox(
       key: const Key('input-video-metadata'),
@@ -510,7 +528,7 @@ class _InputVideoMetadataCard extends StatelessWidget {
               style: Theme.of(context).textTheme.bodyLarge,
             ),
             const SizedBox(height: 4),
-            Text(codec),
+            Text(metadata.codecName),
             Text(
               '${metadata.widthPixels} × ${metadata.heightPixels} • '
               '${metadata.framesPerSecond.toStringAsFixed(2)} FPS • '

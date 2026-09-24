@@ -64,9 +64,10 @@ def test_probe_rejects_text_renamed_as_mp4(tmp_path):
 @pytest.mark.parametrize(
     ("tag", "expected_name"),
     [
-        ("avc1", "H.264 / AVC"),
-        ("hvc1", "HEVC / H.265"),
-        ("hev1", "HEVC / H.265"),
+        ("avc1", "H.264 (AVC)"),
+        ("hvc1", "HEVC (H.265)"),
+        ("hev1", "HEVC (H.265)"),
+        ("hevc", "HEVC (H.265)"),
         ("mp4v", "MPEG-4 Part 2"),
         ("zzzz", "Unknown codec (zzzz)"),
     ],

@@ -15,11 +15,12 @@ import cv2
 
 
 CODEC_NAMES = {
-    "avc1": "H.264 / AVC",
-    "h264": "H.264 / AVC",
-    "x264": "H.264 / AVC",
-    "hvc1": "HEVC / H.265",
-    "hev1": "HEVC / H.265",
+    "avc1": "H.264 (AVC)",
+    "h264": "H.264 (AVC)",
+    "x264": "H.264 (AVC)",
+    "hvc1": "HEVC (H.265)",
+    "hev1": "HEVC (H.265)",
+    "hevc": "HEVC (H.265)",
     "mp4v": "MPEG-4 Part 2",
     "mjpg": "Motion JPEG",
     "vp80": "VP8",

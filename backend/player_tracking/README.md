@@ -56,7 +56,7 @@ Accepted jobs include an `inputVideo` object in every status snapshot:
   "extension": ".mov",
   "sizeBytes": 192518432,
   "codecTag": "hvc1",
-  "codecName": "HEVC / H.265",
+  "codecName": "HEVC (H.265)",
   "widthPixels": 1920,
   "heightPixels": 1080,
   "framesPerSecond": 29.97,

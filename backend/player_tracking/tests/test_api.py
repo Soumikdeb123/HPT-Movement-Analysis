@@ -19,7 +19,7 @@ class FakeVideoProbe:
             extension=video_path.suffix.lower(),
             size_bytes=video_path.stat().st_size,
             codec_tag="avc1",
-            codec_name="H.264 / AVC",
+            codec_name="H.264 (AVC)",
             width_pixels=1920,
             height_pixels=1080,
             frames_per_second=30.0,
@@ -104,7 +104,7 @@ def test_upload_poll_download_and_delete(tmp_path):
 
         assert snapshot["status"] == "completed"
         assert snapshot["progress"] == 1.0
-        assert snapshot["inputVideo"]["codecName"] == "H.264 / AVC"
+        assert snapshot["inputVideo"]["codecName"] == "H.264 (AVC)"
         assert snapshot["inputVideo"]["durationSeconds"] == 10.0
         assert snapshot["result"]["annotatedVideoUrl"].endswith("/video")
 

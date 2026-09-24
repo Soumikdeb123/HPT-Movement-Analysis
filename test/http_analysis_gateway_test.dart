@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hpt_player_analysis/features/analysis/models/analysis_request.dart';
+import 'package:hpt_player_analysis/features/analysis/models/analysis_result.dart';
 import 'package:hpt_player_analysis/features/analysis/repositories/analysis_gateway.dart';
 import 'package:hpt_player_analysis/features/analysis/repositories/http_analysis_gateway.dart';
 import 'package:http/http.dart' as http;
@@ -33,7 +34,7 @@ void main() {
             'extension': '.mp4',
             'sizeBytes': 4,
             'codecTag': 'avc1',
-            'codecName': 'H.264 / AVC',
+            'codecName': 'H.264 (AVC)',
             'widthPixels': 1920,
             'heightPixels': 1080,
             'framesPerSecond': 30.0,
@@ -79,6 +80,7 @@ void main() {
       client: client,
       pollInterval: Duration.zero,
     );
+    InputVideoMetadata? validatedVideo;
 
     try {
       final result = await gateway.analyseVideo(
@@ -87,13 +89,15 @@ void main() {
           videoName: 'clip.mp4',
           targetPlayer: TargetPlayerPosition.nearCourt,
         ),
+        onVideoValidated: (metadata) => validatedVideo = metadata,
         onProgress: (_) {},
         cancellationToken: AnalysisCancellationToken(),
       );
 
       expect(result.analysisId, 'job-123');
+      expect(validatedVideo?.codecName, 'H.264 (AVC)');
       expect(result.playerById('0')?.totalDistance.value, 42);
-      expect(result.inputVideo?.codecName, 'H.264 / AVC');
+      expect(result.inputVideo?.codecName, 'H.264 (AVC)');
       expect(result.inputVideo?.widthPixels, 1920);
       expect(result.inputVideo?.durationSeconds, 10.0);
       expect(
