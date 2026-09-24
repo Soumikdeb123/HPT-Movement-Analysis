@@ -99,8 +99,17 @@ class HttpAnalysisGateway implements AnalysisGateway {
               .resolve(videoUrl)
               .toString();
         }
+        // Input metadata belongs to the job snapshot, while player metrics are
+        // inside `result`. Pass both sources into the single Flutter model.
+        final rawInputVideo = snapshot['inputVideo'];
         onProgress(1);
-        return AnalysisResult.fromJson(resultJson, analysisId: analysisId);
+        return AnalysisResult.fromJson(
+          resultJson,
+          analysisId: analysisId,
+          inputVideoJson: rawInputVideo is Map
+              ? Map<String, dynamic>.from(rawInputVideo)
+              : null,
+        );
       }
       if (status == 'failed') {
         throw AnalysisGatewayException(

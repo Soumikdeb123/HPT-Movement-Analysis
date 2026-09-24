@@ -29,6 +29,59 @@ processing device, movement path, total distance, speed,
 acceleration/deceleration and direction changes. Court-mapped metre values and
 pixel fallbacks both carry explicit status/warning fields.
 
+## Video compatibility validation
+
+The filename extension is only an initial filter. MP4, MOV, AVI and MKV are
+containers; they do not identify the codec stored inside. For example, an MP4
+or MOV file may contain H.264 or HEVC/H.265 video. The MIME type sent by a
+client is also not treated as proof that the server can decode the file.
+
+After saving an upload, the API uses the same local OpenCV decoder required by
+the tracking engine to:
+
+1. open the file and read its codec tag, resolution, frame rate and frame count;
+2. calculate the duration from frame count divided by frame rate; and
+3. decode unique sample frames near the start, middle and end of the video.
+
+The first frame, dimensions, frame rate and frame count are required. A later
+sample seek failure is reported as a compatibility warning because some valid
+codecs support sequential decoding but not precise seeking. This is a quick
+preflight check, not a guarantee that every frame in a long video is intact.
+
+Accepted jobs include an `inputVideo` object in every status snapshot:
+
+```json
+{
+  "originalFilename": "match.mov",
+  "extension": ".mov",
+  "sizeBytes": 192518432,
+  "codecTag": "hvc1",
+  "codecName": "HEVC / H.265",
+  "widthPixels": 1920,
+  "heightPixels": 1080,
+  "framesPerSecond": 29.97,
+  "frameCount": 18024,
+  "durationSeconds": 601.4,
+  "decodedSampleFrames": 3,
+  "requestedSampleFrames": 3,
+  "compatibilityStatus": "compatible",
+  "warnings": []
+}
+```
+
+Common upload responses are:
+
+| Status | Meaning |
+| --- | --- |
+| `400` | The uploaded file is empty |
+| `413` | The upload exceeds `HPT_MAX_UPLOAD_BYTES` |
+| `415` | The filename extension is not in the initial allow-list |
+| `422` | The extension is allowed, but the saved file cannot be decoded |
+
+HEVC identification does not guarantee HEVC support on every computer. Actual
+support depends on the codecs available to that machine's OpenCV/FFmpeg build,
+which is why the API tests real decoding instead of assuming every MOV works.
+
 ## Run
 
 From the repository root:

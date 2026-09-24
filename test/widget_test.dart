@@ -41,6 +41,9 @@ void main() {
     expect(find.text('Deceleration'), findsOneWidget);
     expect(find.text('Direction changes'), findsOneWidget);
     expect(find.text('Uncalibrated'), findsOneWidget);
+    expect(find.byKey(const Key('input-video-metadata')), findsOneWidget);
+    expect(find.text('H.264 / AVC (avc1)'), findsOneWidget);
+    expect(find.text('1920 × 1080 • 30.00 FPS • 0:10'), findsOneWidget);
     expect(find.text('Heatmap'), findsNothing);
 
     final clearButton = find.byKey(const Key('clear-analysis-button'));
@@ -74,38 +77,57 @@ class _ImmediateGateway implements AnalysisGateway {
     required AnalysisCancellationToken cancellationToken,
   }) async {
     onProgress(1);
-    return AnalysisResult.fromJson(const {
-      'calibrationStatus': 'uncalibrated',
-      'selectedTrackId': '0',
-      'players': [
-        {
-          'trackId': '0',
-          'movementPath': {
-            'status': 'experimental',
-            'coordinateSystem': 'image_pixels',
-            'points': [
-              {'timeSeconds': 0.0, 'x': 0.0, 'y': 0.0},
-              {'timeSeconds': 1.0, 'x': 3.0, 'y': 4.0},
-            ],
+    return AnalysisResult.fromJson(
+      const {
+        'calibrationStatus': 'uncalibrated',
+        'selectedTrackId': '0',
+        'players': [
+          {
+            'trackId': '0',
+            'movementPath': {
+              'status': 'experimental',
+              'coordinateSystem': 'image_pixels',
+              'points': [
+                {'timeSeconds': 0.0, 'x': 0.0, 'y': 0.0},
+                {'timeSeconds': 1.0, 'x': 3.0, 'y': 4.0},
+              ],
+            },
+            'totalDistance': {
+              'status': 'experimental',
+              'value': 500,
+              'unit': 'px',
+            },
+            'speed': {
+              'status': 'experimental',
+              'average': 12,
+              'peak': 18,
+              'unit': 'px/s',
+            },
+            'acceleration': {'status': 'unavailable'},
+            'deceleration': {'status': 'unavailable'},
+            'directionChanges': {'status': 'unavailable'},
           },
-          'totalDistance': {
-            'status': 'experimental',
-            'value': 500,
-            'unit': 'px',
-          },
-          'speed': {
-            'status': 'experimental',
-            'average': 12,
-            'peak': 18,
-            'unit': 'px/s',
-          },
-          'acceleration': {'status': 'unavailable'},
-          'deceleration': {'status': 'unavailable'},
-          'directionChanges': {'status': 'unavailable'},
-        },
-      ],
-      'warnings': [],
-    }, analysisId: 'test-analysis');
+        ],
+        'warnings': [],
+      },
+      analysisId: 'test-analysis',
+      inputVideoJson: const {
+        'originalFilename': 'client-video.mp4',
+        'extension': '.mp4',
+        'sizeBytes': 1048576,
+        'codecTag': 'avc1',
+        'codecName': 'H.264 / AVC',
+        'widthPixels': 1920,
+        'heightPixels': 1080,
+        'framesPerSecond': 30.0,
+        'frameCount': 300,
+        'durationSeconds': 10.0,
+        'decodedSampleFrames': 3,
+        'requestedSampleFrames': 3,
+        'compatibilityStatus': 'compatible',
+        'warnings': [],
+      },
+    );
   }
 
   @override

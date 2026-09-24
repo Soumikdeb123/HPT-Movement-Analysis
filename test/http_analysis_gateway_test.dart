@@ -28,6 +28,22 @@ void main() {
           'analysisId': 'job-123',
           'status': 'completed',
           'progress': 1,
+          'inputVideo': {
+            'originalFilename': 'clip.mp4',
+            'extension': '.mp4',
+            'sizeBytes': 4,
+            'codecTag': 'avc1',
+            'codecName': 'H.264 / AVC',
+            'widthPixels': 1920,
+            'heightPixels': 1080,
+            'framesPerSecond': 30.0,
+            'frameCount': 300,
+            'durationSeconds': 10.0,
+            'decodedSampleFrames': 3,
+            'requestedSampleFrames': 3,
+            'compatibilityStatus': 'compatible',
+            'warnings': [],
+          },
           'result': {
             'calibrationStatus': 'uncalibrated',
             'selectedTrackId': '0',
@@ -77,6 +93,9 @@ void main() {
 
       expect(result.analysisId, 'job-123');
       expect(result.playerById('0')?.totalDistance.value, 42);
+      expect(result.inputVideo?.codecName, 'H.264 / AVC');
+      expect(result.inputVideo?.widthPixels, 1920);
+      expect(result.inputVideo?.durationSeconds, 10.0);
       expect(
         result.annotatedVideoUrl,
         'http://example.test:8000/api/analyses/job-123/video',

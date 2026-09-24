@@ -142,6 +142,12 @@ class _VideoCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final selectedVideo = viewModel.selectedVideo;
+    final videoStatus = switch (viewModel.status) {
+      AnalysisStatus.processing ||
+      AnalysisStatus.cancelling => 'Uploading and analysing...',
+      AnalysisStatus.completed || AnalysisStatus.clearingResult => 'Compatible',
+      _ => 'Ready to validate',
+    };
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -180,7 +186,7 @@ class _VideoCard extends StatelessWidget {
                 leading: const Icon(Icons.movie_outlined),
                 title: Text(selectedVideo.name),
                 subtitle: Text(
-                  '${_formatFileSize(selectedVideo.sizeBytes)} • Ready for analysis',
+                  '${_formatFileSize(selectedVideo.sizeBytes)} • $videoStatus',
                 ),
               ),
             ],
@@ -380,6 +386,10 @@ class _ResultsPanel extends StatelessWidget {
                 ),
               ],
             ),
+            if (result.inputVideo case final metadata?) ...[
+              const SizedBox(height: 12),
+              _InputVideoMetadataCard(metadata: metadata),
+            ],
             if (result.courtCalibration case final calibration?) ...[
               const SizedBox(height: 12),
               ListTile(
@@ -436,6 +446,120 @@ class _ResultsPanel extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _InputVideoMetadataCard extends StatelessWidget {
+  const _InputVideoMetadataCard({required this.metadata});
+
+  final InputVideoMetadata metadata;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final codec = metadata.codecTag == 'unknown'
+        ? metadata.codecName
+        : '${metadata.codecName} (${metadata.codecTag})';
+
+    return DecoratedBox(
+      key: const Key('input-video-metadata'),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.verified_outlined),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Input video',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ],
+                ),
+                Chip(
+                  avatar: Icon(
+                    metadata.hasWarnings
+                        ? Icons.warning_amber_outlined
+                        : Icons.check_circle_outline,
+                    size: 18,
+                  ),
+                  label: Text(
+                    metadata.hasWarnings
+                        ? 'Compatible with warnings'
+                        : 'Compatible',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              metadata.originalFilename,
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            const SizedBox(height: 4),
+            Text(codec),
+            Text(
+              '${metadata.widthPixels} × ${metadata.heightPixels} • '
+              '${metadata.framesPerSecond.toStringAsFixed(2)} FPS • '
+              '${_formatDuration(metadata.durationSeconds)}',
+            ),
+            Text(
+              '${_formatMetadataFileSize(metadata.sizeBytes)} • '
+              '${metadata.decodedSampleFrames} of '
+              '${metadata.requestedSampleFrames} sample frames decoded',
+            ),
+            for (final warning in metadata.warnings) ...[
+              const SizedBox(height: 8),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.warning_amber_outlined,
+                    size: 18,
+                    color: colorScheme.error,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(warning)),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _formatDuration(double seconds) {
+    final totalSeconds = seconds.round();
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final remainingSeconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '$hours:${minutes.toString().padLeft(2, '0')}:'
+          '${remainingSeconds.toString().padLeft(2, '0')}';
+    }
+    return '$minutes:${remainingSeconds.toString().padLeft(2, '0')}';
+  }
+
+  static String _formatMetadataFileSize(int bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '$bytes bytes';
   }
 }
 

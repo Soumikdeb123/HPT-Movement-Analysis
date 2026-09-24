@@ -21,6 +21,8 @@ enum MetricStatus {
 double? _doubleFromJson(Object? value) =>
     value is num ? value.toDouble() : null;
 
+int? _intFromJson(Object? value) => value is num ? value.toInt() : null;
+
 class TrajectoryPoint {
   const TrajectoryPoint({
     required this.timeSeconds,
@@ -200,6 +202,66 @@ class CourtCalibrationResult {
   final double? lengthMeters;
 }
 
+/// Facts measured by the backend after it successfully decodes the upload.
+/// These values are not trusted from the filename or the Flutter file picker.
+class InputVideoMetadata {
+  const InputVideoMetadata({
+    required this.originalFilename,
+    required this.extension,
+    required this.sizeBytes,
+    required this.codecTag,
+    required this.codecName,
+    required this.widthPixels,
+    required this.heightPixels,
+    required this.framesPerSecond,
+    required this.frameCount,
+    required this.durationSeconds,
+    required this.decodedSampleFrames,
+    required this.requestedSampleFrames,
+    required this.compatibilityStatus,
+    required this.warnings,
+  });
+
+  factory InputVideoMetadata.fromJson(Map<String, dynamic> json) {
+    return InputVideoMetadata(
+      originalFilename: json['originalFilename'] as String? ?? 'Unknown video',
+      extension: json['extension'] as String? ?? '',
+      sizeBytes: _intFromJson(json['sizeBytes']) ?? 0,
+      codecTag: json['codecTag'] as String? ?? 'unknown',
+      codecName: json['codecName'] as String? ?? 'Unknown codec',
+      widthPixels: _intFromJson(json['widthPixels']) ?? 0,
+      heightPixels: _intFromJson(json['heightPixels']) ?? 0,
+      framesPerSecond: _doubleFromJson(json['framesPerSecond']) ?? 0,
+      frameCount: _intFromJson(json['frameCount']) ?? 0,
+      durationSeconds: _doubleFromJson(json['durationSeconds']) ?? 0,
+      decodedSampleFrames: _intFromJson(json['decodedSampleFrames']) ?? 0,
+      requestedSampleFrames: _intFromJson(json['requestedSampleFrames']) ?? 0,
+      compatibilityStatus: json['compatibilityStatus'] as String? ?? 'unknown',
+      warnings: (json['warnings'] as List? ?? const [])
+          .whereType<String>()
+          .toList(growable: false),
+    );
+  }
+
+  final String originalFilename;
+  final String extension;
+  final int sizeBytes;
+  final String codecTag;
+  final String codecName;
+  final int widthPixels;
+  final int heightPixels;
+  final double framesPerSecond;
+  final int frameCount;
+  final double durationSeconds;
+  final int decodedSampleFrames;
+  final int requestedSampleFrames;
+  final String compatibilityStatus;
+  final List<String> warnings;
+
+  /// A video can be usable even when later random-access samples fail.
+  bool get hasWarnings => warnings.isNotEmpty;
+}
+
 class AnalysisResult {
   const AnalysisResult({
     required this.analysisId,
@@ -211,11 +273,13 @@ class AnalysisResult {
     this.courtCalibration,
     this.algorithm,
     this.inferenceDevice,
+    this.inputVideo,
   });
 
   factory AnalysisResult.fromJson(
     Map<String, dynamic> json, {
     required String analysisId,
+    Map<String, dynamic>? inputVideoJson,
   }) {
     final rawPlayers = json['players'];
     return AnalysisResult(
@@ -240,6 +304,9 @@ class AnalysisResult {
           : null,
       algorithm: json['algorithm'] as String?,
       inferenceDevice: json['inferenceDevice'] as String?,
+      inputVideo: inputVideoJson == null
+          ? null
+          : InputVideoMetadata.fromJson(inputVideoJson),
       warnings: (json['warnings'] as List? ?? const [])
           .whereType<String>()
           .toList(growable: false),
@@ -254,6 +321,7 @@ class AnalysisResult {
   final CourtCalibrationResult? courtCalibration;
   final String? algorithm;
   final String? inferenceDevice;
+  final InputVideoMetadata? inputVideo;
   final List<String> warnings;
 
   PlayerAnalysis? playerById(String? trackId) {
