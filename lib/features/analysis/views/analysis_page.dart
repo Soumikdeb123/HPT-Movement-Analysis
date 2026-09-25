@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/analysis_result.dart';
 import '../repositories/analysis_gateway.dart';
-import '../repositories/mock_analysis_gateway.dart';
+import '../repositories/http_analysis_gateway.dart';
 import '../view_models/analysis_view_model.dart';
 
 class AnalysisPage extends StatefulWidget {
@@ -20,9 +20,7 @@ class _AnalysisPageState extends State<AnalysisPage> {
   @override
   void initState() {
     super.initState();
-    viewModel = AnalysisViewModel(
-      widget.gateway ?? const MockAnalysisGateway(),
-    );
+    viewModel = AnalysisViewModel(widget.gateway ?? HttpAnalysisGateway());
   }
 
   @override
