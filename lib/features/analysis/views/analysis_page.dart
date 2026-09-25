@@ -312,11 +312,11 @@ class _ResultsPanel extends StatelessWidget {
             ),
 
             if (result.speedSamples.isNotEmpty) ...[
-             const SizedBox(height: 16),
-            _SpeedLineChart(samples: result.speedSamples),
+              const SizedBox(height: 16),
+              _SpeedLineChart(samples: result.speedSamples),
             ],
             const SizedBox(height: 16),
-            
+
             const ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.grid_view_outlined),
@@ -380,7 +380,7 @@ class _MetricTile extends StatelessWidget {
 class _SpeedLineChart extends StatelessWidget {
   const _SpeedLineChart({required this.samples});
 
-  final List<double> samples;
+  final List<SpeedSample> samples;
 
   @override
   Widget build(BuildContext context) {
@@ -428,7 +428,7 @@ class _SpeedChartPainter extends CustomPainter {
     required this.gridColor,
   });
 
-  final List<double> samples;
+  final List<SpeedSample> samples;
   final Color lineColor;
   final Color gridColor;
 
@@ -436,9 +436,15 @@ class _SpeedChartPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (samples.length < 2) return;
 
-    final maxSpeed = samples.reduce((a, b) => a > b ? a : b);
+    final maxSpeed = samples
+        .map((sample) => sample.value)
+        .reduce((a, b) => a > b ? a : b);
 
-    if (maxSpeed <= 0) return;
+    final minTime = samples.first.timeSeconds;
+    final maxTime = samples.last.timeSeconds;
+    final timeRange = maxTime - minTime;
+
+    if (maxSpeed <= 0 || timeRange <= 0) return;
 
     final gridPaint = Paint()
       ..color = gridColor
@@ -452,18 +458,18 @@ class _SpeedChartPainter extends CustomPainter {
     // Draw horizontal guide lines.
     for (var i = 0; i <= 4; i++) {
       final y = size.height * i / 4;
-      canvas.drawLine(
-        Offset(0, y),
-        Offset(size.width, y),
-        gridPaint,
-      );
+
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
     }
 
     final path = Path();
 
     for (var i = 0; i < samples.length; i++) {
-      final x = size.width * i / (samples.length - 1);
-      final y = size.height - (samples[i] / maxSpeed * size.height);
+      final sample = samples[i];
+
+      final x = ((sample.timeSeconds - minTime) / timeRange) * size.width;
+
+      final y = size.height - (sample.value / maxSpeed * size.height);
 
       if (i == 0) {
         path.moveTo(x, y);
@@ -482,7 +488,6 @@ class _SpeedChartPainter extends CustomPainter {
         oldDelegate.gridColor != gridColor;
   }
 }
-
 
 class _ErrorPanel extends StatelessWidget {
   const _ErrorPanel({required this.message});

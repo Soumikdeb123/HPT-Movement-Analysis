@@ -33,7 +33,12 @@ class _ImmediateGateway implements AnalysisGateway {
       distanceMetres: 500,
       averageSpeedKmh: 12,
       peakSpeedKmh: 18,
-      speedSamples: [0, 12, 18, 0],
+      speedSamples: [
+        SpeedSample(timeSeconds: 0, value: 0),
+        SpeedSample(timeSeconds: 1, value: 12),
+        SpeedSample(timeSeconds: 2, value: 18),
+        SpeedSample(timeSeconds: 3, value: 0),
+      ],
       isPrototype: true,
     );
   }

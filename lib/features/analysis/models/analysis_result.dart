@@ -1,3 +1,13 @@
+class SpeedSample {
+  const SpeedSample({
+    required this.timeSeconds,
+    required this.value,
+  });
+
+  final double timeSeconds;
+  final double value;
+}
+
 class AnalysisResult {
   const AnalysisResult({
     required this.distanceMetres,
@@ -12,7 +22,7 @@ class AnalysisResult {
   final double distanceMetres;
   final double averageSpeedKmh;
   final double peakSpeedKmh;
-  final List<double> speedSamples;
+  final List<SpeedSample> speedSamples;
   final bool isPrototype;
   final String? heatmapPath;
   final String? annotatedVideoPath;
