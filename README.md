@@ -1,6 +1,10 @@
 # hpt_player_analysis
 
-A new Flutter project.
+Integrated HPT mobile application: privacy acknowledgement, sign-in/sign-up,
+authorised video upload, player-movement analysis and data/video export.
+
+See [INTEGRATION.md](INTEGRATION.md) for the two backend services, database setup,
+mobile API addresses, contributor mapping, tests and current limitations.
 
 ## Getting Started
 
