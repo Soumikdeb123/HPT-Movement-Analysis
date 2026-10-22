@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'acceleration_chart.dart';
 import '../models/analysis_result.dart';
 import '../repositories/analysis_gateway.dart';
 import '../repositories/mock_analysis_gateway.dart';
@@ -79,6 +80,17 @@ class _AnalysisPageState extends State<AnalysisPage> {
                         if (viewModel.status == AnalysisStatus.completed) ...[
                           const SizedBox(height: 24),
                           _ResultsPanel(result: viewModel.result!),
+                          const SizedBox(height: 16),
+                          const AccelerationChart(
+                            isPrototype: true,
+                            fps: 30,
+                            frameNumbers: [
+                              15, 30, 45, 60, 75, 90, 105, 120,
+                            ],
+                            accelerationValues: [
+                              0.3, 1.2, 2.4, 3.1, 1.8, 0.5, 0.9, 2.0,
+                            ],
+                          ),
                           const SizedBox(height: 8),
                           TextButton(
                             onPressed: viewModel.reset,
