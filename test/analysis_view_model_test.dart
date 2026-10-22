@@ -29,12 +29,22 @@ class _ImmediateGateway implements AnalysisGateway {
   }) async {
     onProgress(0.5);
     onProgress(1);
-    return const AnalysisResult(
-      distanceMetres: 500,
-      averageSpeedKmh: 12,
-      peakSpeedKmh: 18,
-      speedSamples: [0, 12, 18, 0],
-      isPrototype: true,
-    );
+return const AnalysisResult(
+  distanceMetres: 500,
+  averageSpeedKmh: 12,
+  peakSpeedKmh: 18,
+  speedSamples: [
+    MetricSample(timeSeconds: 0, value: 0),
+    MetricSample(timeSeconds: 1, value: 12),
+    MetricSample(timeSeconds: 2, value: 18),
+    MetricSample(timeSeconds: 3, value: 0),
+  ],
+  accelerationSamples: [],
+  decelerationSamples: [],
+  decelerationEfforts: [],
+  decelerationEffortCount: 0,
+  highIntensityDecelerationEffortCount: 0,
+  isPrototype: true,
+);
   }
 }
