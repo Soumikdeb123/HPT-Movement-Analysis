@@ -4,6 +4,9 @@ from math import acos, degrees, hypot
 from statistics import median
 from typing import Dict, Iterable, List, Sequence, Tuple
 
+import numpy as np
+from scipy.ndimage import median_filter
+from scipy.signal import savgol_filter
 
 TrajectorySample = Tuple[int, float, float]
 
@@ -34,6 +37,57 @@ def _angle_between(first: Tuple[float, float], second: Tuple[float, float]) -> f
         first_length * second_length
     )
     return degrees(acos(max(-1.0, min(1.0, cosine))))
+
+def _find_deceleration_efforts(
+    times: Sequence[float],
+    speeds: Sequence[float],
+    accelerations: Sequence[float],
+    threshold: float = 2.0,
+    high_intensity_threshold: float = 3.0,
+    minimum_duration: float = 0.2,
+) -> List[Dict]:
+    """Find sustained periods where acceleration is at or below -threshold."""
+
+    efforts: List[Dict] = []
+    index = 0
+
+    while index < len(accelerations):
+        if accelerations[index] > -threshold:
+            index += 1
+            continue
+
+        end = index
+        while end < len(accelerations) and accelerations[end] <= -threshold:
+            end += 1
+
+        start_time = times[index]
+        end_time = times[end - 1]
+        duration = end_time - start_time
+
+        if duration >= minimum_duration:
+            effort_accelerations = accelerations[index:end]
+            peak = abs(min(effort_accelerations))
+
+            efforts.append(
+                {
+                    "startTimeSeconds": round(start_time, 4),
+                    "endTimeSeconds": round(end_time, 4),
+                    "durationSeconds": round(duration, 3),
+                    "peakDeceleration": round(peak, 3),
+                    "meanDeceleration": round(
+                        sum(abs(value) for value in effort_accelerations)
+                        / len(effort_accelerations),
+                        3,
+                    ),
+                    "speedStart": round(speeds[index], 3),
+                    "speedEnd": round(speeds[end - 1], 3),
+                    "highIntensity": peak >= high_intensity_threshold,
+                }
+            )
+
+        index = end
+
+    return efforts
 
 
 def analyse_trajectory(
@@ -152,6 +206,11 @@ def analyse_trajectory(
             positive_accelerations.append(acceleration)
         elif acceleration < 0:
             decelerations.append(abs(acceleration))
+    deceleration_efforts = _find_deceleration_efforts(
+        times=[sample["timeSeconds"] for sample in acceleration_samples],
+        speeds=smoothed_speeds[1:],
+        accelerations=[sample["value"] for sample in acceleration_samples],
+    )
 
     direction_events: List[Dict] = []
     last_direction_event_index = -3
@@ -211,20 +270,30 @@ def analyse_trajectory(
             if acceleration_samples
             else "Insufficient speed samples.",
         },
-        "deceleration": {
-            "status": "experimental" if acceleration_samples else "unavailable",
-            "value": round(max(decelerations), 3) if decelerations else 0.0,
-            "unit": acceleration_unit if acceleration_samples else None,
-            "samples": [sample for sample in acceleration_samples if sample["value"] < 0],
-            "note": measurement_note
-            if acceleration_samples
-            else "Insufficient speed samples.",
-        },
-        "directionChanges": {
-            "status": "experimental",
-            "count": len(direction_events),
-            "events": direction_events,
-            "note": (
+    "deceleration": {
+        "status": "experimental" if acceleration_samples else "unavailable",
+        "value": round(max(decelerations), 3) if decelerations else 0.0,
+        "unit": acceleration_unit if acceleration_samples else None,
+        "samples": [
+            sample
+            for sample in acceleration_samples
+            if sample["value"] < 0
+        ],
+        "efforts": deceleration_efforts,
+        "effortCount": len(deceleration_efforts),
+        "highIntensityEffortCount": sum(
+            1 for effort in deceleration_efforts
+            if effort["highIntensity"]
+        ),
+        "note": measurement_note
+        if acceleration_samples
+        else "Insufficient speed samples.",
+    },  
+    "directionChanges": {
+        "status": "experimental",
+        "count": len(direction_events),
+        "events": direction_events,
+        "note": (
                 f"Prototype count using a {direction_change_degrees:.0f}° threshold; "
                 "not yet validated."
             ),

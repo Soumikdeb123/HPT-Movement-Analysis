@@ -56,3 +56,24 @@ def test_estimated_court_trajectory_uses_metres():
     assert result["totalDistance"]["value"] == pytest.approx(5.0)
     assert result["totalDistance"]["unit"] == "m"
     assert result["speed"]["unit"] == "m/s"
+
+def test_deceleration_efforts_are_reported():
+    result = analyse_trajectory(
+        [
+            (0, 0.0, 0.0),
+            (10, 10.0, 0.0),
+            (20, 18.0, 0.0),
+            (30, 24.0, 0.0),
+            (40, 28.0, 0.0),
+            (50, 30.0, 0.0),
+            (60, 30.0, 0.0),
+        ],
+        fps=10.0,
+        minimum_step=0.08,
+        coordinate_system="estimated_court_metres",
+        distance_unit="m",
+    )
+
+    assert "efforts" in result["deceleration"]
+    assert "effortCount" in result["deceleration"]
+    assert "highIntensityEffortCount" in result["deceleration"]
