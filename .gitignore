@@ -46,3 +46,10 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Local HPT runtime/generated files
+backend/player_tracking/.venv/
+runtime/
+analyzed_video.mp4
+**/__pycache__/
+*.pyc
