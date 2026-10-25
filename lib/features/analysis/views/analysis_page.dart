@@ -134,8 +134,7 @@ Future<void> _selectVideo() async {
     path = await onSelectVideo!();
   } else {
     final file = await FilePicker.pickFile(
-      type: FileType.custom,
-      allowedExtensions: ['mp4', 'mov', 'avi', 'mkv'],
+      type: FileType.video,
     );
 
     path = file?.path;
@@ -144,7 +143,8 @@ Future<void> _selectVideo() async {
   if (path != null) {
     viewModel.selectVideo(path);
   }
-}  @override
+}
+  @override
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
@@ -209,9 +209,15 @@ class _OptionsCard extends StatelessWidget {
               initialValue: viewModel.selectedPlayer,
               decoration: const InputDecoration(labelText: 'Target player'),
               items: const [
-                DropdownMenuItem(value: 'Player 1', child: Text('Player 1')),
-                DropdownMenuItem(value: 'Player 2', child: Text('Player 2')),
-              ],
+                DropdownMenuItem(
+                  value: 'near',
+                  child: Text('Near-court player'),
+                ),
+                DropdownMenuItem(
+                  value: 'far',
+                  child: Text('Far-court player'),
+                 ),
+                ],
               onChanged: viewModel.isProcessing ? null : viewModel.selectPlayer,
             ),
             const SizedBox(height: 8),

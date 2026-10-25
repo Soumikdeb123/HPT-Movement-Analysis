@@ -13,7 +13,7 @@ class AnalysisViewModel extends ChangeNotifier {
 
   AnalysisStatus status = AnalysisStatus.idle;
   String? videoPath;
-  String selectedPlayer = 'Player 1';
+  String selectedPlayer = 'near';
   bool includeExperimentalSpeed = true;
   double progress = 0;
   AnalysisResult? result;
@@ -65,10 +65,11 @@ void selectVideo(String path) {
         },
       );
       status = AnalysisStatus.completed;
-    } on Object {
-      status = AnalysisStatus.failed;
-      errorMessage = 'Analysis failed. Please try again.';
-    }
+} catch (error) {
+  status = AnalysisStatus.failed;
+  errorMessage = 'Analysis failed: $error';
+  debugPrint('Analysis error: $error');
+}
 
     notifyListeners();
   }
@@ -76,7 +77,7 @@ void selectVideo(String path) {
   void reset() {
     status = AnalysisStatus.idle;
     videoPath = null;
-    selectedPlayer = 'Player 1';
+    selectedPlayer = 'near';
     includeExperimentalSpeed = true;
     progress = 0;
     result = null;
