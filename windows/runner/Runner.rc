@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "hpt_movement_analysis" "\0"
+            VALUE "CompanyName", "au.edu.adelaide.hpt" "\0"
+            VALUE "FileDescription", "hpt_player_analysis" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "hpt_movement_analysis" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "hpt_movement_analysis.exe" "\0"
-            VALUE "ProductName", "hpt_movement_analysis" "\0"
+            VALUE "InternalName", "hpt_player_analysis" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 au.edu.adelaide.hpt. All rights reserved." "\0"
+            VALUE "OriginalFilename", "hpt_player_analysis.exe" "\0"
+            VALUE "ProductName", "hpt_player_analysis" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

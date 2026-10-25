@@ -1,11 +1,23 @@
+enum TargetPlayerPosition {
+  nearCourt('near', 'Near-court player'),
+  farCourt('far', 'Far-court player');
+
+  const TargetPlayerPosition(this.apiValue, this.label);
+
+  final String apiValue;
+  final String label;
+}
+
 class AnalysisRequest {
   const AnalysisRequest({
     required this.videoPath,
-    required this.playerLabel,
-    required this.includeExperimentalSpeed,
+    required this.videoName,
+    required this.targetPlayer,
+    this.athleteMassKg,
   });
 
   final String videoPath;
-  final String playerLabel;
-  final bool includeExperimentalSpeed;
+  final String videoName;
+  final TargetPlayerPosition targetPlayer;
+  final double? athleteMassKg;
 }

@@ -1,6 +1,6 @@
 {
-    "name": "hpt_movement_analysis",
-    "short_name": "hpt_movement_analysis",
+    "name": "hpt_player_analysis",
+    "short_name": "hpt_player_analysis",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
