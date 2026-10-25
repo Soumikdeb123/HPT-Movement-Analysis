@@ -13,9 +13,11 @@ class AnalysisRequest {
     required this.videoPath,
     required this.videoName,
     required this.targetPlayer,
+    required this.athleteMassKg,
   });
 
   final String videoPath;
   final String videoName;
   final TargetPlayerPosition targetPlayer;
+  final double athleteMassKg;
 }

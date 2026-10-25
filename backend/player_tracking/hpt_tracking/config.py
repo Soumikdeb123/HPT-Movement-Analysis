@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 import os
 from pathlib import Path
+from typing import Optional
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -22,7 +23,7 @@ class Settings:
     maximum_players: int = 1
     inference_device: str = "auto"
     # Tests may explicitly omit authentication; normal server startup enables it.
-    auth_url: str | None = None
+    auth_url: Optional[str] = None
 
     @classmethod
     def from_environment(cls) -> "Settings":

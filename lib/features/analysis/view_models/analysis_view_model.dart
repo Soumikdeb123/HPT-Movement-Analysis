@@ -10,6 +10,7 @@ enum AnalysisStatus {
   idle,
   selectingVideo,
   videoSelected,
+  validating,
   processing,
   cancelling,
   completed,
@@ -27,14 +28,18 @@ class AnalysisViewModel extends ChangeNotifier {
   SelectedVideo? selectedVideo;
   double progress = 0;
   AnalysisResult? result;
+  InputVideoMetadata? validatedVideoMetadata;
   String? errorMessage;
   TargetPlayerPosition targetPlayer = TargetPlayerPosition.nearCourt;
+  double? athleteMassKg;
   AnalysisCancellationToken? _cancellationToken;
   int _operationGeneration = 0;
 
   bool get isProcessing =>
+      status == AnalysisStatus.validating ||
       status == AnalysisStatus.processing ||
       status == AnalysisStatus.cancelling;
+  bool get isValidating => status == AnalysisStatus.validating;
   bool get isCancelling => status == AnalysisStatus.cancelling;
   bool get isClearingResult => status == AnalysisStatus.clearingResult;
   bool get isSelectingVideo => status == AnalysisStatus.selectingVideo;
@@ -42,7 +47,8 @@ class AnalysisViewModel extends ChangeNotifier {
       selectedVideo != null &&
       !isProcessing &&
       !isSelectingVideo &&
-      !isClearingResult;
+      !isClearingResult &&
+      athleteMassKg != null;
   PlayerAnalysis? get selectedPlayer {
     final players = result?.players;
     return players == null || players.isEmpty ? null : players.first;
@@ -68,6 +74,7 @@ class AnalysisViewModel extends ChangeNotifier {
 
       selectedVideo = video;
       result = null;
+      validatedVideoMetadata = null;
       progress = 0;
       status = AnalysisStatus.videoSelected;
     } on Object catch (error) {
@@ -85,13 +92,23 @@ class AnalysisViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  void updateAthleteMass(String value) {
+    final parsed = double.tryParse(value.trim());
+    athleteMassKg = parsed != null && parsed >= 20 && parsed <= 250
+        ? parsed
+        : null;
+    notifyListeners();
+  }
+
   Future<void> startAnalysis() async {
     final video = selectedVideo;
-    if (video == null || !canStart) return;
+    final massKg = athleteMassKg;
+    if (video == null || massKg == null || !canStart) return;
 
-    status = AnalysisStatus.processing;
+    status = AnalysisStatus.validating;
     progress = 0;
     result = null;
+    validatedVideoMetadata = null;
     errorMessage = null;
     notifyListeners();
 
@@ -105,9 +122,21 @@ class AnalysisViewModel extends ChangeNotifier {
           videoPath: video.path,
           videoName: video.name,
           targetPlayer: targetPlayer,
+          athleteMassKg: massKg,
         ),
+        onVideoValidated: (metadata) {
+          if (operationGeneration != _operationGeneration) return;
+          validatedVideoMetadata = metadata;
+          status = AnalysisStatus.processing;
+          notifyListeners();
+        },
         onProgress: (value) {
           if (operationGeneration != _operationGeneration) return;
+          // Keep compatibility with older servers that do not return the new
+          // metadata object, while still leaving the validation phase.
+          if (status == AnalysisStatus.validating) {
+            status = AnalysisStatus.processing;
+          }
           progress = value.clamp(0, 1);
           notifyListeners();
         },
@@ -115,6 +144,8 @@ class AnalysisViewModel extends ChangeNotifier {
       );
       if (operationGeneration != _operationGeneration) return;
       result = completedResult;
+      validatedVideoMetadata =
+          completedResult.inputVideo ?? validatedVideoMetadata;
       progress = 1;
       status = AnalysisStatus.completed;
     } on AnalysisCancelledException {
@@ -184,8 +215,10 @@ class AnalysisViewModel extends ChangeNotifier {
     selectedVideo = null;
     progress = 0;
     result = null;
+    validatedVideoMetadata = null;
     errorMessage = null;
     targetPlayer = TargetPlayerPosition.nearCourt;
+    // The mass field remains mounted after clearing a result, so retain its value.
   }
 
   bool _disposed = false;

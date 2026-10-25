@@ -12,8 +12,14 @@ from statistics import median
 from typing import Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 
 from .court_geometry import CourtCalibration, CourtDetector
+from .kinematics import (
+    MAXIMUM_ACCELERATION_MPS2,
+    MAXIMUM_GAP_FRAMES,
+    MAXIMUM_PLAYER_SPEED_MPS,
+    MINIMUM_CALIBRATION_CONFIDENCE,
+    analyse_force_velocity,
+)
 from .metrics import TrajectorySample, analyse_trajectory
-from .pixel_effort import pixel_effort
 
 
 ProgressCallback = Callable[[float], None]
@@ -35,6 +41,7 @@ class TrackingEngine(Protocol):
         progress_callback: ProgressCallback,
         cancellation_callback: CancellationCallback,
         target_player: str,
+        athlete_mass_kg: float,
     ) -> Dict:
         """Analyse a video and return a JSON-serialisable dictionary."""
 
@@ -268,6 +275,7 @@ class YuchenPrototypeTrackingEngine:
         progress_callback: ProgressCallback,
         cancellation_callback: CancellationCallback,
         target_player: str,
+        athlete_mass_kg: float,
     ) -> Dict:
         try:
             import cv2
@@ -301,7 +309,20 @@ class YuchenPrototypeTrackingEngine:
             has_sample, sample = capture.read()
             if has_sample:
                 calibration_frames.append(sample)
-        calibration = CourtDetector().detect_from_frames(calibration_frames)
+        calibration_candidate = CourtDetector().detect_from_frames(calibration_frames)
+        calibration = (
+            calibration_candidate
+            if calibration_candidate is not None
+            and calibration_candidate.confidence >= MINIMUM_CALIBRATION_CONFIDENCE
+            else None
+        )
+        calibration_rejection_note = None
+        if calibration_candidate is not None and calibration is None:
+            calibration_rejection_note = (
+                "Court lines were detected, but their multi-frame confidence "
+                f"({calibration_candidate.confidence:.0%}) was below the "
+                f"{MINIMUM_CALIBRATION_CONFIDENCE:.0%} metric threshold."
+            )
         capture.release()
         capture = cv2.VideoCapture(str(input_path))
 
@@ -401,7 +422,18 @@ class YuchenPrototypeTrackingEngine:
         players = []
         for track in primary_tracks:
             court_metrics = None
-            if calibration is not None and track.court_trajectory:
+            force_velocity = analyse_force_velocity(
+                track.court_trajectory if calibration is not None else [],
+                fps,
+                athlete_mass_kg,
+                calibration.confidence if calibration is not None else 0.0,
+            )
+            metric_validation = force_velocity["metricValidation"]
+            if (
+                calibration is not None
+                and track.court_trajectory
+                and metric_validation["status"] == "accepted"
+            ):
                 trajectory = self._smooth_trajectory(track.court_trajectory)
                 court_metrics = analyse_trajectory(
                     trajectory,
@@ -410,50 +442,75 @@ class YuchenPrototypeTrackingEngine:
                     coordinate_system="estimated_court_metres",
                     distance_unit="m",
                     measurement_note=(
-                        "Estimated from automatically detected court lines and "
-                        "standard doubles-court dimensions; not manually validated."
+                        "Estimated from detected court lines and standard "
+                        "doubles-court dimensions."
                     ),
+                    maximum_gap_frames=MAXIMUM_GAP_FRAMES,
+                    maximum_speed=MAXIMUM_PLAYER_SPEED_MPS,
+                    maximum_acceleration=MAXIMUM_ACCELERATION_MPS2,
                 )
-            # Supervisor demo: primary outputs use image pixels consistently.
-            # Retain court estimates separately rather than relabelling metres as pixels.
-            trajectory = self._smooth_trajectory(track.image_trajectory)
-            metrics = analyse_trajectory(trajectory, fps)
-            metrics["overallEffort"] = pixel_effort(track.image_trajectory, fps)
+            image_trajectory = self._smooth_trajectory(track.image_trajectory)
+            image_metrics = analyse_trajectory(image_trajectory, fps)
+
+            # Reliable court mapping makes metre values the product-facing
+            # result. Pixel metrics stay in the JSON as a transparent fallback
+            # and for diagnosis, never relabelled as real-world units.
+            metrics = court_metrics if court_metrics is not None else image_metrics
             players.append(
                 {
                     "trackId": str(track.track_id),
                     "trackedFrames": len(track.image_trajectory),
                     **metrics,
                     "courtMetrics": court_metrics,
+                    "pixelMetrics": image_metrics,
+                    "forceVelocity": force_velocity,
                 }
             )
 
         progress_callback(1.0)
         warnings = [
-            "Pixel demonstration mode: displayed positions, distances and speed use image units. Court estimates, if available, are retained separately in JSON.",
-            "Effort is an unvalidated pixel-motion proxy, not physiological workload. Do not compare across cameras, resolutions or unequal durations. Long tracking gaps are excluded from effort.",
             "Tracking is based on the team's Yuchen-supplied Playertracking prototype.",
             f"Only the selected {target_player}-court athlete is reported.",
             "Player association may still lose or switch identities after occlusion.",
         ]
+        metric_results_available = bool(
+            players and players[0]["courtMetrics"] is not None
+        )
         if calibration is None:
             warnings.append(
                 "Court detection was not reliable enough; movement remains in pixels."
             )
+            if calibration_rejection_note is not None:
+                warnings.append(calibration_rejection_note)
+        elif metric_results_available:
+            warnings.append(
+                "Movement distance, speed, acceleration and Force–Velocity are "
+                "automatic court-mapped estimates, not laboratory measurements."
+            )
         else:
             warnings.append(
-                "Court-to-metre mapping is automatic and experimental, not validated."
+                "Court lines were detected, but the selected athlete's metric "
+                "trajectory did not pass reliability checks; movement remains "
+                "in image pixels."
+            )
+        if players and players[0]["forceVelocity"]["status"] == "unavailable":
+            warnings.append(
+                "Estimated Force–Velocity was withheld: "
+                + players[0]["forceVelocity"]["note"]
             )
         if not players:
             warnings.append("No player track met the persistence threshold.")
 
         return {
-            "schemaVersion": 2,
-            "algorithm": "Yuchen Playertracking prototype with integration safeguards",
+            "schemaVersion": 3,
+            "algorithm": (
+                "Yuchen Playertracking prototype with validated metric kinematics"
+            ),
             "calibrationStatus": "estimated" if calibration is not None else "uncalibrated",
             "courtCalibration": calibration.as_dict() if calibration else None,
             "inferenceDevice": self._device_label,
             "targetPlayer": target_player,
+            "athleteMassKg": round(athlete_mass_kg, 2),
             "selectedTrackId": players[0]["trackId"] if players else None,
             "video": {
                 "fps": round(fps, 3),

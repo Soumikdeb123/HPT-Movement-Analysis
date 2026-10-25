@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from hpt_tracking.api import create_app
 from hpt_tracking.config import Settings
-from test_api import FakeTrackingEngine
+from test_api import FakeTrackingEngine, FakeVideoProbe
 
 
 def test_analysis_requires_session_and_is_owned_by_the_logged_in_user(tmp_path, monkeypatch):
@@ -20,12 +20,14 @@ def test_analysis_requires_session_and_is_owned_by_the_logged_in_user(tmp_path, 
     app = create_app(
         Settings(runtime_dir=tmp_path, auth_url="http://auth.test"),
         FakeTrackingEngine(),
+        FakeVideoProbe(),
     )
     with TestClient(app) as client:
         assert client.post("/api/analyses").status_code == 401
         assert client.post("/api/analyses", headers={"Authorization": "Bearer bad"}).status_code == 401
         upload = client.post("/api/analyses",
             headers={"Authorization": "Bearer alice"},
+            data={"athlete_mass_kg": "75"},
             files={"video": ("example.mp4", b"test-video", "video/mp4")})
         assert upload.status_code == 202
         job = upload.json()["analysisId"]

@@ -59,3 +59,54 @@ def test_estimated_court_trajectory_uses_metres():
     assert result["leftRightDistance"]["value"] == pytest.approx(3)
     assert result["forwardBackDistance"]["value"] == pytest.approx(4)
     assert result["overallEffort"]["status"] == "unavailable"
+
+
+def test_metric_results_skip_long_gaps_and_impossible_position_jumps():
+    result = analyse_trajectory(
+        [
+            (0, 0.0, 0.0),
+            (1, 0.1, 0.0),
+            (20, 5.0, 0.0),  # Long tracking gap: start a new segment.
+            (21, 5.1, 0.0),
+            (22, 20.0, 0.0),  # Implausible player-speed jump: exclude it.
+        ],
+        fps=10.0,
+        minimum_step=0.01,
+        coordinate_system="estimated_court_metres",
+        distance_unit="m",
+        maximum_gap_frames=5,
+        maximum_speed=12.0,
+        maximum_acceleration=15.0,
+    )
+
+    assert result["totalDistance"]["value"] == pytest.approx(0.2)
+    assert result["speed"]["peak"] == pytest.approx(1.0)
+
+
+def test_metric_results_withhold_implausible_acceleration_samples():
+    # The speed changes from 1 m/s to 10 m/s in 0.1 seconds. The movement is
+    # possible under the speed ceiling, but its derived acceleration is not.
+    samples = [
+        (0, 0.0, 0.0),
+        (1, 0.1, 0.0),
+        (2, 0.2, 0.0),
+        (3, 0.3, 0.0),
+        (4, 1.3, 0.0),
+        (5, 2.3, 0.0),
+        (6, 3.3, 0.0),
+    ]
+    result = analyse_trajectory(
+        samples,
+        fps=10.0,
+        minimum_step=0.01,
+        coordinate_system="estimated_court_metres",
+        distance_unit="m",
+        maximum_gap_frames=5,
+        maximum_speed=12.0,
+        maximum_acceleration=15.0,
+    )
+
+    assert all(
+        abs(sample["value"]) <= 15.0
+        for sample in result["acceleration"]["samples"]
+    )

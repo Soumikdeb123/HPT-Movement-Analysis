@@ -50,12 +50,14 @@ class HttpAnalysisGateway implements AnalysisGateway {
     AnalysisRequest request, {
     required ProgressCallback onProgress,
     required AnalysisCancellationToken cancellationToken,
+    VideoValidatedCallback? onVideoValidated,
   }) async {
     final deadline = DateTime.now().add(analysisTimeout);
     final createRequest =
         http.MultipartRequest('POST', baseUri.resolve('/api/analyses'))
           ..headers.addAll(_headers)
           ..fields['target_player'] = request.targetPlayer.apiValue
+          ..fields['athlete_mass_kg'] = request.athleteMassKg.toString()
           ..files.add(
             await http.MultipartFile.fromPath(
               'video',
@@ -84,6 +86,13 @@ class HttpAnalysisGateway implements AnalysisGateway {
       );
     }
     cancellationToken.attachAnalysisId(analysisId);
+    final rawInputVideo = snapshot['inputVideo'];
+    final inputVideoJson = rawInputVideo is Map
+        ? Map<String, dynamic>.from(rawInputVideo)
+        : null;
+    if (inputVideoJson != null) {
+      onVideoValidated?.call(InputVideoMetadata.fromJson(inputVideoJson));
+    }
 
     while (true) {
       if (cancellationToken.isCancellationRequested) {
@@ -109,7 +118,11 @@ class HttpAnalysisGateway implements AnalysisGateway {
               .toString();
         }
         onProgress(1);
-        return AnalysisResult.fromJson(resultJson, analysisId: analysisId);
+        return AnalysisResult.fromJson(
+          resultJson,
+          analysisId: analysisId,
+          inputVideoJson: inputVideoJson,
+        );
       }
       if (status == 'failed') {
         throw AnalysisGatewayException(

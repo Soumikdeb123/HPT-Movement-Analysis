@@ -2,7 +2,7 @@
 
 from math import acos, degrees, hypot
 from statistics import median
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 TrajectorySample = Tuple[int, float, float]
@@ -22,6 +22,23 @@ def _moving_median(values: Sequence[float], radius: int = 2) -> List[float]:
         median(values[max(0, index - radius) : index + radius + 1])
         for index in range(len(values))
     ]
+
+
+def _moving_median_by_segment(
+    values: Sequence[float], segment_ids: Sequence[int], radius: int = 2
+) -> List[float]:
+    """Smooth values without crossing a tracking gap or rejected jump."""
+
+    smoothed: List[float] = []
+    for index, segment_id in enumerate(segment_ids):
+        candidates = [
+            value
+            for neighbour, value in enumerate(values)
+            if segment_ids[neighbour] == segment_id
+            and abs(neighbour - index) <= radius
+        ]
+        smoothed.append(median(candidates))
+    return smoothed
 
 
 def _angle_between(first: Tuple[float, float], second: Tuple[float, float]) -> float:
@@ -46,6 +63,9 @@ def analyse_trajectory(
     measurement_note: str = (
         "Pixel-space prototype result; not calibrated to real-world units."
     ),
+    maximum_gap_frames: Optional[int] = None,
+    maximum_speed: Optional[float] = None,
+    maximum_acceleration: Optional[float] = None,
 ) -> Dict:
     """Calculate movement metrics without overstating measurement accuracy.
 
@@ -100,29 +120,41 @@ def analyse_trajectory(
     speeds: List[float] = []
     vectors: List[Tuple[float, float]] = []
     sample_times: List[float] = []
+    segment_ids: List[int] = []
+    segment_id = 0
 
     for previous, current in zip(ordered_samples, ordered_samples[1:]):
         previous_frame, previous_x, previous_y = previous
         current_frame, current_x, current_y = current
         frame_delta = current_frame - previous_frame
-        if frame_delta <= 0:
+        if frame_delta <= 0 or (
+            maximum_gap_frames is not None and frame_delta > maximum_gap_frames
+        ):
+            segment_id += 1
             continue
 
         delta_x = current_x - previous_x
         delta_y = current_y - previous_y
         distance = hypot(delta_x, delta_y)
+        elapsed_seconds = frame_delta / fps
+        speed = distance / elapsed_seconds
+        if maximum_speed is not None and speed > maximum_speed:
+            # Do not let a probable identity switch inflate distance or speed.
+            segment_id += 1
+            continue
         if distance < minimum_step:
             # Bounding-box feet jitter even when a player is standing still.
             # Treat sub-threshold movement as zero rather than accumulating it.
             delta_x = 0.0
             delta_y = 0.0
             distance = 0.0
-        elapsed_seconds = frame_delta / fps
+            speed = 0.0
 
         distances.append(distance)
-        speeds.append(distance / elapsed_seconds)
+        speeds.append(speed)
         vectors.append((delta_x, delta_y))
         sample_times.append(current_frame / fps)
+        segment_ids.append(segment_id)
 
     if not speeds:
         return analyse_trajectory(
@@ -133,18 +165,28 @@ def analyse_trajectory(
             coordinate_system=coordinate_system,
             distance_unit=distance_unit,
             measurement_note=measurement_note,
+            maximum_gap_frames=maximum_gap_frames,
+            maximum_speed=maximum_speed,
+            maximum_acceleration=maximum_acceleration,
         )
 
-    smoothed_speeds = _moving_median(speeds)
+    smoothed_speeds = _moving_median_by_segment(speeds, segment_ids)
     acceleration_samples: List[Dict] = []
     positive_accelerations: List[float] = []
     decelerations: List[float] = []
 
     for index in range(1, len(smoothed_speeds)):
+        if segment_ids[index] != segment_ids[index - 1]:
+            continue
         time_delta = sample_times[index] - sample_times[index - 1]
         if time_delta <= 0:
             continue
         acceleration = (smoothed_speeds[index] - smoothed_speeds[index - 1]) / time_delta
+        if (
+            maximum_acceleration is not None
+            and abs(acceleration) > maximum_acceleration
+        ):
+            continue
         acceleration_samples.append(
             {
                 "timeSeconds": round(sample_times[index], 4),
@@ -159,6 +201,8 @@ def analyse_trajectory(
     direction_events: List[Dict] = []
     last_direction_event_index = -3
     for index in range(1, len(vectors)):
+        if segment_ids[index] != segment_ids[index - 1]:
+            continue
         if hypot(*vectors[index - 1]) < minimum_step:
             continue
         if hypot(*vectors[index]) < minimum_step:
@@ -241,8 +285,8 @@ def analyse_trajectory(
             "count": len(direction_events),
             "events": direction_events,
             "note": (
-                f"Prototype count using a {direction_change_degrees:.0f}° threshold; "
-                "not yet validated."
+                f"Counted when consecutive movement directions differ by at least "
+                f"{direction_change_degrees:.0f}°."
             ),
         },
     }

@@ -10,16 +10,12 @@ enum MetricStatus {
       _ => MetricStatus.unavailable,
     };
   }
-
-  String get label => switch (this) {
-    MetricStatus.calibrated => 'Calibrated',
-    MetricStatus.experimental => 'Experimental',
-    MetricStatus.unavailable => 'Not available',
-  };
 }
 
 double? _doubleFromJson(Object? value) =>
     value is num ? value.toDouble() : null;
+
+int? _intFromJson(Object? value) => value is num ? value.toInt() : null;
 
 class TrajectoryPoint {
   const TrajectoryPoint({
@@ -118,6 +114,84 @@ class SpeedMetric {
   final String? note;
 }
 
+class ForceVelocitySample {
+  const ForceVelocitySample({
+    required this.timeSeconds,
+    required this.velocityMps,
+    required this.accelerationMps2,
+    required this.estimatedNetForceN,
+    required this.phase,
+  });
+
+  factory ForceVelocitySample.fromJson(Map<String, dynamic> json) {
+    return ForceVelocitySample(
+      timeSeconds: _doubleFromJson(json['timeSeconds']) ?? 0,
+      velocityMps: _doubleFromJson(json['velocityMps']) ?? 0,
+      accelerationMps2:
+          _doubleFromJson(json['tangentialAccelerationMps2']) ?? 0,
+      estimatedNetForceN: _doubleFromJson(json['estimatedNetForceN']) ?? 0,
+      phase: json['phase'] as String? ?? 'steady',
+    );
+  }
+
+  final double timeSeconds;
+  final double velocityMps;
+  final double accelerationMps2;
+  final double estimatedNetForceN;
+  final String phase;
+}
+
+class ForceVelocityAnalysis {
+  const ForceVelocityAnalysis({
+    required this.status,
+    required this.samples,
+    this.massKg,
+    this.maximumVelocityMps,
+    this.peakPropulsiveForceN,
+    this.peakBrakingForceN,
+    this.note,
+  });
+
+  const ForceVelocityAnalysis.unavailable()
+    : status = MetricStatus.unavailable,
+      samples = const [],
+      massKg = null,
+      maximumVelocityMps = null,
+      peakPropulsiveForceN = null,
+      peakBrakingForceN = null,
+      note = null;
+
+  factory ForceVelocityAnalysis.fromJson(Map<String, dynamic> json) {
+    final rawSamples = json['samples'];
+    return ForceVelocityAnalysis(
+      status: MetricStatus.fromJson(json['status']),
+      samples: rawSamples is List
+          ? rawSamples
+                .whereType<Map>()
+                .map(
+                  (sample) => ForceVelocitySample.fromJson(
+                    Map<String, dynamic>.from(sample),
+                  ),
+                )
+                .toList(growable: false)
+          : const [],
+      massKg: _doubleFromJson(json['massKg']),
+      maximumVelocityMps: _doubleFromJson(json['maximumVelocityMps']),
+      peakPropulsiveForceN: _doubleFromJson(json['peakPropulsiveForceN']),
+      peakBrakingForceN: _doubleFromJson(json['peakBrakingForceN']),
+      note: json['note'] as String?,
+    );
+  }
+
+  final MetricStatus status;
+  final List<ForceVelocitySample> samples;
+  final double? massKg;
+  final double? maximumVelocityMps;
+  final double? peakPropulsiveForceN;
+  final double? peakBrakingForceN;
+  final String? note;
+}
+
 class DirectionChangesMetric {
   const DirectionChangesMetric({required this.status, this.count, this.note});
 
@@ -143,6 +217,8 @@ class PlayerAnalysis {
     required this.acceleration,
     required this.deceleration,
     required this.directionChanges,
+    this.trackedFrames,
+    this.forceVelocity = const ForceVelocityAnalysis.unavailable(),
     this.leftRightDistance = const NumericMetric(
       status: MetricStatus.unavailable,
     ),
@@ -165,6 +241,7 @@ class PlayerAnalysis {
         object('forwardBackDistance'),
       ),
       overallEffort: NumericMetric.fromJson(object('overallEffort')),
+      trackedFrames: _intFromJson(json['trackedFrames']),
       trackId: json['trackId']?.toString() ?? 'unknown',
       movementPath: MovementPath.fromJson(object('movementPath')),
       totalDistance: NumericMetric.fromJson(object('totalDistance')),
@@ -174,12 +251,14 @@ class PlayerAnalysis {
       directionChanges: DirectionChangesMetric.fromJson(
         object('directionChanges'),
       ),
+      forceVelocity: ForceVelocityAnalysis.fromJson(object('forceVelocity')),
     );
   }
 
   final NumericMetric leftRightDistance;
   final NumericMetric forwardBackDistance;
   final NumericMetric overallEffort;
+  final int? trackedFrames;
   final String trackId;
   final MovementPath movementPath;
   final NumericMetric totalDistance;
@@ -187,6 +266,65 @@ class PlayerAnalysis {
   final NumericMetric acceleration;
   final NumericMetric deceleration;
   final DirectionChangesMetric directionChanges;
+  final ForceVelocityAnalysis forceVelocity;
+}
+
+/// Video facts measured by the backend after it successfully decodes the file.
+class InputVideoMetadata {
+  const InputVideoMetadata({
+    required this.originalFilename,
+    required this.extension,
+    required this.sizeBytes,
+    required this.codecTag,
+    required this.codecName,
+    required this.widthPixels,
+    required this.heightPixels,
+    required this.framesPerSecond,
+    required this.frameCount,
+    required this.durationSeconds,
+    required this.decodedSampleFrames,
+    required this.requestedSampleFrames,
+    required this.compatibilityStatus,
+    required this.warnings,
+  });
+
+  factory InputVideoMetadata.fromJson(Map<String, dynamic> json) {
+    return InputVideoMetadata(
+      originalFilename: json['originalFilename'] as String? ?? 'Unknown video',
+      extension: json['extension'] as String? ?? '',
+      sizeBytes: _intFromJson(json['sizeBytes']) ?? 0,
+      codecTag: json['codecTag'] as String? ?? 'unknown',
+      codecName: json['codecName'] as String? ?? 'Unknown codec',
+      widthPixels: _intFromJson(json['widthPixels']) ?? 0,
+      heightPixels: _intFromJson(json['heightPixels']) ?? 0,
+      framesPerSecond: _doubleFromJson(json['framesPerSecond']) ?? 0,
+      frameCount: _intFromJson(json['frameCount']) ?? 0,
+      durationSeconds: _doubleFromJson(json['durationSeconds']) ?? 0,
+      decodedSampleFrames: _intFromJson(json['decodedSampleFrames']) ?? 0,
+      requestedSampleFrames: _intFromJson(json['requestedSampleFrames']) ?? 0,
+      compatibilityStatus: json['compatibilityStatus'] as String? ?? 'unknown',
+      warnings: (json['warnings'] as List? ?? const [])
+          .whereType<String>()
+          .toList(growable: false),
+    );
+  }
+
+  final String originalFilename;
+  final String extension;
+  final int sizeBytes;
+  final String codecTag;
+  final String codecName;
+  final int widthPixels;
+  final int heightPixels;
+  final double framesPerSecond;
+  final int frameCount;
+  final double durationSeconds;
+  final int decodedSampleFrames;
+  final int requestedSampleFrames;
+  final String compatibilityStatus;
+  final List<String> warnings;
+
+  bool get hasWarnings => warnings.isNotEmpty;
 }
 
 class CourtCalibrationResult {
@@ -229,16 +367,26 @@ class AnalysisResult {
     this.courtCalibration,
     this.algorithm,
     this.inferenceDevice,
+    this.inputVideo,
+    this.processedFrames,
     this.rawData = const {},
   });
 
   factory AnalysisResult.fromJson(
     Map<String, dynamic> json, {
     required String analysisId,
+    Map<String, dynamic>? inputVideoJson,
   }) {
     final rawPlayers = json['players'];
+    final rawVideo = Map<String, dynamic>.from(
+      json['video'] as Map? ?? const {},
+    );
+    final rawData = Map<String, dynamic>.from(json);
+    if (inputVideoJson != null) {
+      rawData['inputVideo'] = Map<String, dynamic>.from(inputVideoJson);
+    }
     return AnalysisResult(
-      rawData: Map<String, dynamic>.from(json),
+      rawData: rawData,
       analysisId: analysisId,
       calibrationStatus: json['calibrationStatus'] as String? ?? 'uncalibrated',
       selectedTrackId: json['selectedTrackId']?.toString(),
@@ -260,6 +408,10 @@ class AnalysisResult {
           : null,
       algorithm: json['algorithm'] as String?,
       inferenceDevice: json['inferenceDevice'] as String?,
+      inputVideo: inputVideoJson == null
+          ? null
+          : InputVideoMetadata.fromJson(inputVideoJson),
+      processedFrames: _intFromJson(rawVideo['processedFrames']),
       warnings: (json['warnings'] as List? ?? const [])
           .whereType<String>()
           .toList(growable: false),
@@ -275,6 +427,8 @@ class AnalysisResult {
   final CourtCalibrationResult? courtCalibration;
   final String? algorithm;
   final String? inferenceDevice;
+  final InputVideoMetadata? inputVideo;
+  final int? processedFrames;
   final List<String> warnings;
 
   PlayerAnalysis? playerById(String? trackId) {

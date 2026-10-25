@@ -17,8 +17,10 @@ void main() {
     expect(viewModel.canStart, isFalse);
 
     await viewModel.selectVideo();
-    expect(viewModel.canStart, isTrue);
+    expect(viewModel.canStart, isFalse);
     expect(viewModel.selectedVideo?.name, 'client-video.mp4');
+    viewModel.updateAthleteMass('75');
+    expect(viewModel.canStart, isTrue);
 
     await viewModel.startAnalysis();
 
@@ -30,6 +32,7 @@ void main() {
     await viewModel.clearAnalysis();
     expect(viewModel.status, AnalysisStatus.idle);
     expect(viewModel.result, isNull);
+    expect(viewModel.athleteMassKg, 75);
   });
 
   test('cancelled file selection leaves the view model idle', () async {
@@ -39,6 +42,7 @@ void main() {
     );
 
     await viewModel.selectVideo();
+    viewModel.updateAthleteMass('75');
 
     expect(viewModel.status, AnalysisStatus.idle);
     expect(viewModel.selectedVideo, isNull);
@@ -48,6 +52,7 @@ void main() {
     final gateway = _CancellableGateway();
     final viewModel = AnalysisViewModel(gateway, const _FakeVideoPicker());
     await viewModel.selectVideo();
+    viewModel.updateAthleteMass('75');
 
     final runningAnalysis = viewModel.startAnalysis();
     expect(viewModel.status, AnalysisStatus.processing);
@@ -88,8 +93,10 @@ class _ImmediateGateway implements AnalysisGateway {
     AnalysisRequest request, {
     required ProgressCallback onProgress,
     required AnalysisCancellationToken cancellationToken,
+    VideoValidatedCallback? onVideoValidated,
   }) async {
     expect(request.videoName, 'client-video.mp4');
+    expect(request.athleteMassKg, 75);
     onProgress(0.5);
     onProgress(1);
     return _testResult;
@@ -117,6 +124,7 @@ class _CancellableGateway implements AnalysisGateway {
     AnalysisRequest request, {
     required ProgressCallback onProgress,
     required AnalysisCancellationToken cancellationToken,
+    VideoValidatedCallback? onVideoValidated,
   }) {
     onProgress(0.25);
     return _result.future;

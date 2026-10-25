@@ -15,7 +15,13 @@ from fastapi.responses import FileResponse
 
 from .config import Settings
 from .jobs import AnalysisJobManager
+from .kinematics import (
+    MAXIMUM_MASS_KG,
+    MINIMUM_MASS_KG,
+    validate_athlete_mass,
+)
 from .tracking_engine import PrototypeTrackingEngine, TrackingEngine
+from .video_validation import OpenCvVideoProbe, VideoProbe, VideoValidationError
 
 
 ALLOWED_VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
@@ -25,6 +31,7 @@ CHUNK_SIZE = 1024 * 1024
 def create_app(
     settings: Optional[Settings] = None,
     engine: Optional[TrackingEngine] = None,
+    video_probe: Optional[VideoProbe] = None,
 ) -> FastAPI:
     configured_settings = settings or Settings.from_environment()
     if engine is None:
@@ -46,6 +53,7 @@ def create_app(
         )
     else:
         configured_engine = engine
+    configured_video_probe = video_probe or OpenCvVideoProbe()
 
     manager = AnalysisJobManager(
         runtime_dir=configured_settings.runtime_dir,
@@ -115,6 +123,7 @@ def create_app(
         request: Request,
         video: UploadFile = File(...),
         target_player: str = Form("near"),
+        athlete_mass_kg: float = Form(...),
         user: str = Depends(authenticated_user),
     ) -> dict:
         if target_player not in {"near", "far"}:
@@ -122,7 +131,16 @@ def create_app(
                 status_code=422,
                 detail="Select either the near-court or far-court player.",
             )
-        suffix = Path(video.filename or "").suffix.lower()
+        if not validate_athlete_mass(athlete_mass_kg):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Enter an athlete mass between {MINIMUM_MASS_KG:.0f} and "
+                    f"{MAXIMUM_MASS_KG:.0f} kg."
+                ),
+            )
+        original_filename = Path(video.filename or "").name
+        suffix = Path(original_filename).suffix.lower()
         if suffix not in ALLOWED_VIDEO_SUFFIXES:
             raise HTTPException(
                 status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -158,10 +176,27 @@ def create_app(
             shutil.rmtree(job_root, ignore_errors=True)
             raise HTTPException(status_code=400, detail="The selected video is empty.")
 
+        # Validate the saved file itself rather than trusting its extension.
+        # This also gives the client measured codec, frame-rate and duration
+        # information before the expensive tracking job enters the queue.
+        try:
+            input_video = configured_video_probe.probe(
+                input_path,
+                original_filename,
+            )
+        except VideoValidationError as error:
+            shutil.rmtree(job_root, ignore_errors=True)
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except Exception:
+            shutil.rmtree(job_root, ignore_errors=True)
+            raise
+
         job = request.app.state.job_manager.create_job(
             input_path=input_path,
-            original_filename=Path(video.filename or f"video{suffix}").name,
+            original_filename=original_filename or f"video{suffix}",
             target_player=target_player,
+            athlete_mass_kg=athlete_mass_kg,
+            input_video=input_video.to_dict(),
         )
         owners[job.snapshot()["analysisId"]] = user
         return job.snapshot()

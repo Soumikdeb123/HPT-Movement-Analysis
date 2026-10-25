@@ -91,11 +91,11 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                               title: 'Data covered',
                               body:
                                   'Video footage and derived player metrics, '
-                                  'including left-right and forward-back '
+                                  'including lateral and forward/back '
                                   'movement, distance, speed, acceleration, '
-                                  'deceleration, direction changes and overall '
-                                  'an experimental pixel-motion effort index '
-                                  '(not a physiological measurement).',
+                                  'deceleration, direction changes and an '
+                                  'estimated Force–Velocity analysis when the '
+                                  'court mapping is reliable.',
                             ),
                             _NoticeSection(
                               title: 'Purpose and access',

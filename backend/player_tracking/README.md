@@ -5,15 +5,19 @@ and the team's Yuchen-supplied player-tracking prototype. FastAPI handles
 uploads and job status; `YuchenPrototypeTrackingEngine` adapts Yuchen's YOLO and
 centroid-tracking loop; `court_geometry.py` adapts his court dimensions,
 Hough-line detection and homography; and `metrics.py` owns the output
-calculations. Keeping these responsibilities separate allows later algorithm
-work without rewriting the mobile UI or API.
+calculations. Reliable metre-based smoothing, validation and estimated
+Force–Velocity are kept together in `kinematics.py`. Keeping these
+responsibilities separate allows later algorithm work without rewriting the
+mobile UI or API. `video_validation.py` verifies that uploads can actually be
+decoded and reports measured codec, resolution, frame rate and duration before
+a tracking job starts.
 
 ## API
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Check service and calibration status |
-| `POST` | `/api/analyses` | Upload multipart field `video`; returns `202` |
+| `POST` | `/api/analyses` | Upload `video`, `target_player`, and `athlete_mass_kg`; returns `202` |
 | `GET` | `/api/analyses/{id}` | Poll status, progress, and completed result |
 | `GET` | `/api/analyses/{id}/video` | Stream the annotated result video |
 | `POST` | `/api/analyses/{id}/cancel` | Cooperatively cancel queued/running work |
@@ -25,9 +29,12 @@ memory on a development laptop.
 
 The completed JSON returns one persistent track for the athlete selected by
 their starting court side (`near` or `far`). It includes the court calibration,
-processing device, movement path, total distance, speed,
+processing device, tracking coverage, total distance, speed,
 acceleration/deceleration and direction changes. Court-mapped metre values and
-pixel fallbacks both carry explicit status/warning fields.
+pixel fallbacks both carry explicit status/warning fields. Estimated
+Force–Velocity is returned only when calibration and trajectory checks pass;
+it is body mass × video-derived tangential acceleration, not measured
+ground-reaction force.
 
 ## Run
 

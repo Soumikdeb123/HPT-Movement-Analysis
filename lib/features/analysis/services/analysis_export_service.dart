@@ -32,7 +32,6 @@ class AnalysisExportService {
       metric('forward_back_distance', player.forwardBackDistance);
       metric('peak_acceleration', player.acceleration);
       metric('peak_deceleration', player.deceleration);
-      metric('overall_effort', player.overallEffort);
       rows.add([
         player.trackId,
         'average_speed',
@@ -56,6 +55,32 @@ class AnalysisExportService {
         'count',
         player.directionChanges.status.name,
         player.directionChanges.note,
+      ]);
+      rows.addAll([
+        [
+          player.trackId,
+          'force_velocity_maximum_velocity',
+          player.forceVelocity.maximumVelocityMps,
+          'm/s',
+          player.forceVelocity.status.name,
+          player.forceVelocity.note,
+        ],
+        [
+          player.trackId,
+          'estimated_peak_propulsive_force',
+          player.forceVelocity.peakPropulsiveForceN,
+          'N',
+          player.forceVelocity.status.name,
+          player.forceVelocity.note,
+        ],
+        [
+          player.trackId,
+          'estimated_peak_braking_force',
+          player.forceVelocity.peakBrakingForceN,
+          'N',
+          player.forceVelocity.status.name,
+          player.forceVelocity.note,
+        ],
       ]);
     }
     return rows.map((row) => row.map(cell).join(',')).join('\r\n');
