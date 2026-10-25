@@ -49,13 +49,20 @@ class AnalysisResult {
   Map<String, dynamic> json, {
   String? analysisId,
 }) {
+  final players = json['players'] as List<dynamic>? ?? const [];
+
+  final player = players.isNotEmpty
+      ? players.first as Map<String, dynamic>
+      : <String, dynamic>{};
+
   final totalDistance =
-      json['totalDistance'] as Map<String, dynamic>? ?? {};
-  final speed = json['speed'] as Map<String, dynamic>? ?? {};
+      player['totalDistance'] as Map<String, dynamic>? ?? {};
+  final speed =
+      player['speed'] as Map<String, dynamic>? ?? {};
   final acceleration =
-      json['acceleration'] as Map<String, dynamic>? ?? {};
+      player['acceleration'] as Map<String, dynamic>? ?? {};
   final deceleration =
-      json['deceleration'] as Map<String, dynamic>? ?? {};
+      player['deceleration'] as Map<String, dynamic>? ?? {};
 
   List<MetricSample> parseSamples(dynamic rawSamples) {
     if (rawSamples is! List) return const [];
@@ -66,7 +73,8 @@ class AnalysisResult {
           (sample) => MetricSample(
             timeSeconds:
                 (sample['timeSeconds'] as num?)?.toDouble() ?? 0,
-            value: (sample['value'] as num?)?.toDouble() ?? 0,
+            value:
+                (sample['value'] as num?)?.toDouble() ?? 0,
           ),
         )
         .toList();
@@ -93,7 +101,8 @@ class AnalysisResult {
                   (effort['speedStart'] as num?)?.toDouble() ?? 0,
               speedEnd:
                   (effort['speedEnd'] as num?)?.toDouble() ?? 0,
-              highIntensity: effort['highIntensity'] == true,
+              highIntensity:
+                  effort['highIntensity'] == true,
             ),
           )
           .toList()
@@ -106,16 +115,23 @@ class AnalysisResult {
         (speed['average'] as num?)?.toDouble() ?? 0,
     peakSpeedKmh:
         (speed['peak'] as num?)?.toDouble() ?? 0,
-    speedSamples: parseSamples(speed['samples']),
-    accelerationSamples: parseSamples(acceleration['samples']),
-    decelerationSamples: parseSamples(deceleration['samples']),
-    decelerationEfforts: efforts,
+    speedSamples:
+        parseSamples(speed['samples']),
+    accelerationSamples:
+        parseSamples(acceleration['samples']),
+    decelerationSamples:
+        parseSamples(deceleration['samples']),
+    decelerationEfforts:
+        efforts,
     decelerationEffortCount:
-        (deceleration['effortCount'] as num?)?.toInt() ?? efforts.length,
+        (deceleration['effortCount'] as num?)?.toInt() ??
+            efforts.length,
     highIntensityDecelerationEffortCount:
         (deceleration['highIntensityEffortCount'] as num?)?.toInt() ??
             efforts.where((effort) => effort.highIntensity).length,
-    isPrototype: true,
+    isPrototype: false,
+    annotatedVideoPath:
+        json['annotatedVideoUrl'] as String?,
   );
 }
 
