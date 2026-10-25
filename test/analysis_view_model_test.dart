@@ -10,7 +10,7 @@ void main() {
 
     expect(viewModel.canStart, isFalse);
 
-    viewModel.selectPrototypeVideo();
+    viewModel.selectVideo('/tmp/sample_tennis_match.mp4');
     expect(viewModel.canStart, isTrue);
 
     await viewModel.startAnalysis();

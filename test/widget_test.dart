@@ -10,7 +10,12 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(
-      MaterialApp(home: AnalysisPage(gateway: _ImmediateGateway())),
+      MaterialApp(
+        home: AnalysisPage(
+          gateway: _ImmediateGateway(),
+          onSelectVideo: () async => 'sample_tennis_match.mp4',
+        ),
+      ),
     );
 
     final startButton = find.byKey(const Key('start-analysis-button'));
@@ -40,22 +45,23 @@ class _ImmediateGateway implements AnalysisGateway {
     required ProgressCallback onProgress,
   }) async {
     onProgress(1);
+
     return const AnalysisResult(
       distanceMetres: 500,
       averageSpeedKmh: 12,
       peakSpeedKmh: 18,
       speedSamples: [
-         MetricSample(timeSeconds: 0, value: 0),
-         MetricSample(timeSeconds: 1, value: 12),
-         MetricSample(timeSeconds: 2, value: 18),
-         MetricSample(timeSeconds: 3, value: 0),
+        MetricSample(timeSeconds: 0, value: 0),
+        MetricSample(timeSeconds: 1, value: 12),
+        MetricSample(timeSeconds: 2, value: 18),
+        MetricSample(timeSeconds: 3, value: 0),
       ],
-  accelerationSamples: [],
-  decelerationSamples: [],
-  decelerationEfforts: [],
-  decelerationEffortCount: 0,
-  highIntensityDecelerationEffortCount: 0,
-  isPrototype: true,
-);
+      accelerationSamples: [],
+      decelerationSamples: [],
+      decelerationEfforts: [],
+      decelerationEffortCount: 0,
+      highIntensityDecelerationEffortCount: 0,
+      isPrototype: true,
+    );
   }
 }

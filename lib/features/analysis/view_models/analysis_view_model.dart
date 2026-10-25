@@ -23,13 +23,13 @@ class AnalysisViewModel extends ChangeNotifier {
 
   bool get canStart => videoPath != null && !isProcessing;
 
-  void selectPrototypeVideo() {
-    videoPath = 'sample_tennis_match.mp4';
-    status = AnalysisStatus.videoSelected;
-    result = null;
-    errorMessage = null;
-    notifyListeners();
-  }
+void selectVideo(String path) {
+  videoPath = path;
+  status = AnalysisStatus.videoSelected;
+  result = null;
+  errorMessage = null;
+  notifyListeners();
+}
 
   void selectPlayer(String? player) {
     if (player == null || player == selectedPlayer) return;

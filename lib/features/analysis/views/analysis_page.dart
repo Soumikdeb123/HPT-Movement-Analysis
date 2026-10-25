@@ -1,4 +1,6 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+
 
 import '../models/analysis_result.dart';
 import '../repositories/analysis_gateway.dart';
@@ -6,9 +8,14 @@ import '../repositories/http_analysis_gateway.dart';
 import '../view_models/analysis_view_model.dart';
 
 class AnalysisPage extends StatefulWidget {
-  const AnalysisPage({super.key, this.gateway});
+const AnalysisPage({
+  super.key,
+  this.gateway,
+  this.onSelectVideo,
+});
 
-  final AnalysisGateway? gateway;
+final AnalysisGateway? gateway;
+final Future<String?> Function()? onSelectVideo;
 
   @override
   State<AnalysisPage> createState() => _AnalysisPageState();
@@ -63,7 +70,10 @@ viewModel = AnalysisViewModel(
                           style: Theme.of(context).textTheme.bodyLarge,
                         ),
                         const SizedBox(height: 24),
-                        _VideoCard(viewModel: viewModel),
+                        _VideoCard(
+                          viewModel: viewModel,
+                          onSelectVideo: widget.onSelectVideo,
+                        ),
                         const SizedBox(height: 16),
                         _OptionsCard(viewModel: viewModel),
                         const SizedBox(height: 16),
@@ -110,11 +120,31 @@ viewModel = AnalysisViewModel(
 }
 
 class _VideoCard extends StatelessWidget {
-  const _VideoCard({required this.viewModel});
+const _VideoCard({
+  required this.viewModel,
+  this.onSelectVideo,
+});
 
-  final AnalysisViewModel viewModel;
+final AnalysisViewModel viewModel;
+final Future<String?> Function()? onSelectVideo;
+Future<void> _selectVideo() async {
+  String? path;
 
-  @override
+  if (onSelectVideo != null) {
+    path = await onSelectVideo!();
+  } else {
+    final file = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: ['mp4', 'mov', 'avi', 'mkv'],
+    );
+
+    path = file?.path;
+  }
+
+  if (path != null) {
+    viewModel.selectVideo(path);
+  }
+}  @override
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
@@ -136,9 +166,9 @@ class _VideoCard extends StatelessWidget {
               key: const Key('select-video-button'),
               onPressed: viewModel.isProcessing
                   ? null
-                  : viewModel.selectPrototypeVideo,
+                  : _selectVideo,
               icon: const Icon(Icons.video_library_outlined),
-              label: const Text('Select prototype video'),
+              label: const Text('Select video'),
             ),
             if (viewModel.videoPath != null) ...[
               const SizedBox(height: 12),
