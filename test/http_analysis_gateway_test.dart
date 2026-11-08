@@ -45,11 +45,30 @@ void main() {
         request.headers['content-type'],
         startsWith('multipart/form-data'),
       );
+      final body = request.body;
+      expect(body, contains('athlete_mass_kg'));
+      expect(body, contains('75.0'));
       return http.Response(
         jsonEncode({
           'analysisId': 'job-123',
           'status': 'completed',
           'progress': 1,
+          'inputVideo': {
+            'originalFilename': 'clip.mp4',
+            'extension': '.mp4',
+            'sizeBytes': 4,
+            'codecTag': 'avc1',
+            'codecName': 'H.264 (AVC)',
+            'widthPixels': 1920,
+            'heightPixels': 1080,
+            'framesPerSecond': 30,
+            'frameCount': 300,
+            'durationSeconds': 10,
+            'decodedSampleFrames': 3,
+            'requestedSampleFrames': 3,
+            'compatibilityStatus': 'compatible',
+            'warnings': [],
+          },
           'result': {
             'calibrationStatus': 'uncalibrated',
             'selectedTrackId': '0',
@@ -87,18 +106,23 @@ void main() {
     );
 
     try {
+      String? validatedCodec;
       final result = await gateway.analyseVideo(
         AnalysisRequest(
           videoPath: video.path,
           videoName: 'clip.mp4',
           targetPlayer: TargetPlayerPosition.nearCourt,
+          athleteMassKg: 75,
         ),
+        onVideoValidated: (metadata) => validatedCodec = metadata.codecName,
         onProgress: (_) {},
         cancellationToken: AnalysisCancellationToken(),
       );
 
       expect(result.analysisId, 'job-123');
       expect(result.playerById('0')?.totalDistance.value, 42);
+      expect(validatedCodec, 'H.264 (AVC)');
+      expect(result.inputVideo?.frameCount, 300);
       expect(
         result.annotatedVideoUrl,
         'http://example.test:8000/api/analyses/job-123/video',

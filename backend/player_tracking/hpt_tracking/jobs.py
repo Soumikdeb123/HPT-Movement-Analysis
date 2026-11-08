@@ -9,6 +9,7 @@ from typing import Dict, Optional
 from uuid import uuid4
 
 from .tracking_engine import AnalysisCancelled, TrackingEngine
+from .reports import save_reports
 
 
 @dataclass
@@ -18,6 +19,8 @@ class AnalysisJob:
     output_dir: Path
     original_filename: str
     target_player: str
+    athlete_mass_kg: Optional[float]
+    input_video: Dict
     status: str = "queued"
     progress: float = 0.0
     result: Optional[Dict] = None
@@ -31,12 +34,17 @@ class AnalysisJob:
             if result is not None and result.get("annotatedVideoFilename"):
                 result["annotatedVideoUrl"] = f"/api/analyses/{self.job_id}/video"
                 result.pop("annotatedVideoFilename", None)
+            if result is not None and result.get("reportImages"):
+                result["reportImages"] = [{"title": item["title"], "url": f"/api/analyses/{self.job_id}/reports/{item['filename']}"} for item in result["reportImages"]]
+                result["reportArchiveUrl"] = f"/api/analyses/{self.job_id}/reports/reports.zip"
             return {
                 "analysisId": self.job_id,
                 "status": self.status,
                 "progress": self.progress,
                 "originalFilename": self.original_filename,
                 "targetPlayer": self.target_player,
+                "athleteMassKg": self.athlete_mass_kg,
+                "inputVideo": dict(self.input_video),
                 "result": result,
                 "error": self.error,
             }
@@ -54,7 +62,12 @@ class AnalysisJobManager:
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
 
     def create_job(
-        self, input_path: Path, original_filename: str, target_player: str
+        self,
+        input_path: Path,
+        original_filename: str,
+        target_player: str,
+        athlete_mass_kg: Optional[float],
+        input_video: Dict,
     ) -> AnalysisJob:
         job_id = uuid4().hex
         job_root = self.runtime_dir / job_id
@@ -70,6 +83,8 @@ class AnalysisJobManager:
             output_dir=output_dir,
             original_filename=original_filename,
             target_player=target_player,
+            athlete_mass_kg=athlete_mass_kg,
+            input_video=dict(input_video),
         )
         with self._jobs_lock:
             self.jobs[job_id] = job
@@ -127,7 +142,10 @@ class AnalysisJobManager:
                 progress_callback=update_progress,
                 cancellation_callback=job.cancel_event.is_set,
                 target_player=job.target_player,
+                athlete_mass_kg=job.athlete_mass_kg,
             )
+            if not job.cancel_event.is_set():
+                save_reports(result, job.output_dir)
             with job.lock:
                 if job.cancel_event.is_set():
                     job.status = "cancelled"

@@ -2,6 +2,7 @@ import '../models/analysis_request.dart';
 import '../models/analysis_result.dart';
 
 typedef ProgressCallback = void Function(double progress);
+typedef VideoValidatedCallback = void Function(InputVideoMetadata metadata);
 
 class AnalysisCancellationToken {
   bool _isCancellationRequested = false;
@@ -33,6 +34,7 @@ abstract interface class AnalysisGateway {
     AnalysisRequest request, {
     required ProgressCallback onProgress,
     required AnalysisCancellationToken cancellationToken,
+    VideoValidatedCallback? onVideoValidated,
   });
 
   Future<void> cancelAnalysis(AnalysisCancellationToken cancellationToken);

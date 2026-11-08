@@ -8,6 +8,21 @@ import 'package:hpt_player_analysis/features/analysis/services/analysis_video_pi
 import 'package:hpt_player_analysis/features/analysis/view_models/analysis_view_model.dart';
 
 void main() {
+  test('blank mass allows analysis; malformed mass gives a visible validation error', () async {
+    final vm = AnalysisViewModel(
+      _ImmediateGateway(expectedMass: null),
+      const _FakeVideoPicker(),
+    );
+    await vm.selectVideo();
+    expect(vm.canStart, isTrue);
+    vm.updateAthleteMass('invalid');
+    expect(vm.canStart, isFalse);
+    expect(vm.massError, isNotNull);
+    vm.updateAthleteMass('');
+    await vm.startAnalysis();
+    expect(vm.status, AnalysisStatus.completed);
+    expect(vm.athleteMassKg, isNull);
+  });
   test('analysis progresses from a selected real file to a result', () async {
     final viewModel = AnalysisViewModel(
       _ImmediateGateway(),
@@ -17,8 +32,10 @@ void main() {
     expect(viewModel.canStart, isFalse);
 
     await viewModel.selectVideo();
-    expect(viewModel.canStart, isTrue);
+    expect(viewModel.canStart, isTrue); // Body mass is optional.
     expect(viewModel.selectedVideo?.name, 'client-video.mp4');
+    viewModel.updateAthleteMass('75');
+    expect(viewModel.canStart, isTrue);
 
     await viewModel.startAnalysis();
 
@@ -30,6 +47,7 @@ void main() {
     await viewModel.clearAnalysis();
     expect(viewModel.status, AnalysisStatus.idle);
     expect(viewModel.result, isNull);
+    expect(viewModel.athleteMassKg, 75);
   });
 
   test('cancelled file selection leaves the view model idle', () async {
@@ -39,6 +57,7 @@ void main() {
     );
 
     await viewModel.selectVideo();
+    viewModel.updateAthleteMass('75');
 
     expect(viewModel.status, AnalysisStatus.idle);
     expect(viewModel.selectedVideo, isNull);
@@ -48,6 +67,7 @@ void main() {
     final gateway = _CancellableGateway();
     final viewModel = AnalysisViewModel(gateway, const _FakeVideoPicker());
     await viewModel.selectVideo();
+    viewModel.updateAthleteMass('75');
 
     final runningAnalysis = viewModel.startAnalysis();
     expect(viewModel.status, AnalysisStatus.processing);
@@ -83,13 +103,17 @@ class _CancelledVideoPicker implements AnalysisVideoPicker {
 }
 
 class _ImmediateGateway implements AnalysisGateway {
+  _ImmediateGateway({this.expectedMass = 75});
+  final double? expectedMass;
   @override
   Future<AnalysisResult> analyseVideo(
     AnalysisRequest request, {
     required ProgressCallback onProgress,
     required AnalysisCancellationToken cancellationToken,
+    VideoValidatedCallback? onVideoValidated,
   }) async {
     expect(request.videoName, 'client-video.mp4');
+    expect(request.athleteMassKg, expectedMass);
     onProgress(0.5);
     onProgress(1);
     return _testResult;
@@ -117,6 +141,7 @@ class _CancellableGateway implements AnalysisGateway {
     AnalysisRequest request, {
     required ProgressCallback onProgress,
     required AnalysisCancellationToken cancellationToken,
+    VideoValidatedCallback? onVideoValidated,
   }) {
     onProgress(0.25);
     return _result.future;

@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../../../core/config/api_endpoints.dart';
+
 import '../../auth/repositories/auth_repository.dart';
 import '../models/analysis_request.dart';
 import '../models/analysis_result.dart';
@@ -23,14 +25,7 @@ class HttpAnalysisGateway implements AnalysisGateway {
     http.Client? client,
     this.pollInterval = const Duration(seconds: 1),
     this.analysisTimeout = const Duration(hours: 2),
-  }) : baseUri =
-           baseUri ??
-           Uri.parse(
-             const String.fromEnvironment(
-               'HPT_ANALYSIS_API_URL',
-               defaultValue: 'http://10.0.2.2:8000/',
-             ),
-           ),
+  }) : baseUri = baseUri ?? Uri.parse(ApiEndpoints.analysis),
        _client = client ?? http.Client(),
        _ownsClient = client == null;
 
@@ -50,6 +45,7 @@ class HttpAnalysisGateway implements AnalysisGateway {
     AnalysisRequest request, {
     required ProgressCallback onProgress,
     required AnalysisCancellationToken cancellationToken,
+    VideoValidatedCallback? onVideoValidated,
   }) async {
     final deadline = DateTime.now().add(analysisTimeout);
     final createRequest =
@@ -64,6 +60,9 @@ class HttpAnalysisGateway implements AnalysisGateway {
             ),
           );
 
+    if (request.athleteMassKg case final double mass) {
+      createRequest.fields['athlete_mass_kg'] = mass.toString();
+    }
     http.StreamedResponse createResponse;
     try {
       createResponse = await _client
@@ -84,6 +83,13 @@ class HttpAnalysisGateway implements AnalysisGateway {
       );
     }
     cancellationToken.attachAnalysisId(analysisId);
+    final rawInputVideo = snapshot['inputVideo'];
+    final inputVideoJson = rawInputVideo is Map
+        ? Map<String, dynamic>.from(rawInputVideo)
+        : null;
+    if (inputVideoJson != null) {
+      onVideoValidated?.call(InputVideoMetadata.fromJson(inputVideoJson));
+    }
 
     while (true) {
       if (cancellationToken.isCancellationRequested) {
@@ -108,8 +114,25 @@ class HttpAnalysisGateway implements AnalysisGateway {
               .resolve(videoUrl)
               .toString();
         }
+        if (resultJson['reportImages'] case final List images) {
+          resultJson['reportImages'] = images
+              .map(
+                (item) => {
+                  ...Map<String, dynamic>.from(item as Map),
+                  'url': baseUri.resolve(item['url'] as String).toString(),
+                },
+              )
+              .toList();
+        }
+        if (resultJson['reportArchiveUrl'] case final String url) {
+          resultJson['reportArchiveUrl'] = baseUri.resolve(url).toString();
+        }
         onProgress(1);
-        return AnalysisResult.fromJson(resultJson, analysisId: analysisId);
+        return AnalysisResult.fromJson(
+          resultJson,
+          analysisId: analysisId,
+          inputVideoJson: inputVideoJson,
+        );
       }
       if (status == 'failed') {
         throw AnalysisGatewayException(

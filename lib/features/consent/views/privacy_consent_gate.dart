@@ -91,11 +91,13 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                               title: 'Data covered',
                               body:
                                   'Video footage and derived player metrics, '
-                                  'including left-right and forward-back '
+                                  'including lateral and forward/back '
                                   'movement, distance, speed, acceleration, '
-                                  'deceleration, direction changes and overall '
-                                  'an experimental pixel-motion effort index '
-                                  '(not a physiological measurement).',
+                                  'deceleration, direction changes and an '
+                                  'experimental tangential net force estimate when '
+                                  'court mapping passes quality checks. Optional '
+                                  'body mass is sent with the video for this estimate. '
+                                  'It is not a fatigue score or physiological measurement.',
                             ),
                             _NoticeSection(
                               title: 'Purpose and access',

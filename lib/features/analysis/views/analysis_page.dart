@@ -11,6 +11,8 @@ import '../repositories/analysis_gateway.dart';
 import '../repositories/http_analysis_gateway.dart';
 import '../services/analysis_video_picker.dart';
 import '../view_models/analysis_view_model.dart';
+import 'force_velocity_chart.dart';
+import 'acceleration_chart.dart';
 
 class AnalysisPage extends StatefulWidget {
   const AnalysisPage({
@@ -97,10 +99,13 @@ class _AnalysisPageState extends State<AnalysisPage> {
                         ),
                         const SizedBox(height: 24),
                         _VideoCard(viewModel: viewModel),
+                        if (viewModel.validatedVideoMetadata
+                            case final metadata?) ...[
+                          const SizedBox(height: 16),
+                          _InputVideoMetadataCard(metadata: metadata),
+                        ],
                         const SizedBox(height: 16),
                         _TargetPlayerCard(viewModel: viewModel),
-                        const SizedBox(height: 16),
-                        const _ScopeCard(),
                         const SizedBox(height: 16),
                         FilledButton.icon(
                           key: const Key('start-analysis-button'),
@@ -114,6 +119,7 @@ class _AnalysisPageState extends State<AnalysisPage> {
                           const SizedBox(height: 24),
                           _ProgressPanel(
                             progress: viewModel.progress,
+                            isValidating: viewModel.isValidating,
                             isCancelling: viewModel.isCancelling,
                             onCancel: viewModel.cancelAnalysis,
                           ),
@@ -228,45 +234,65 @@ class _VideoCard extends StatelessWidget {
   }
 }
 
-class _ScopeCard extends StatelessWidget {
-  const _ScopeCard();
+class _InputVideoMetadataCard extends StatelessWidget {
+  const _InputVideoMetadataCard({required this.metadata});
+
+  final InputVideoMetadata metadata;
 
   @override
   Widget build(BuildContext context) {
+    final statusText = metadata.hasWarnings
+        ? 'Compatible with warnings'
+        : 'Compatible';
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                metadata.hasWarnings
+                    ? Icons.warning_amber_outlined
+                    : Icons.verified_outlined,
+              ),
+              title: const Text('Video compatibility checked'),
+              subtitle: Text(statusText),
+            ),
             Text(
-              '3. Review prototype scope',
-              style: Theme.of(context).textTheme.titleLarge,
+              '${metadata.codecName} • '
+              '${metadata.widthPixels} × ${metadata.heightPixels} • '
+              '${metadata.framesPerSecond.toStringAsFixed(1)} fps',
             ),
-            const SizedBox(height: 12),
-            const ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.science_outlined),
-              title: Text('Pixel-based demonstration'),
-              subtitle: Text(
-                'Results use image pixels, px/s and px/s squared. Effort is an '
-                'unvalidated movement proxy, not metabolic power. Court '
-                'estimates are retained separately in JSON when available.',
-              ),
+            const SizedBox(height: 4),
+            Text(
+              '${_formatDuration(metadata.durationSeconds)} • '
+              '${metadata.frameCount} frames • '
+              '${_VideoCard._formatFileSize(metadata.sizeBytes)}',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
-            const ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.person_search_outlined),
-              title: Text('One selected athlete'),
-              subtitle: Text(
-                'The detector can see both players, but the report contains only '
-                'the court-side athlete selected before processing.',
-              ),
-            ),
+            if (metadata.warnings.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              for (final warning in metadata.warnings)
+                Text(
+                  '• $warning',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  static String _formatDuration(double seconds) {
+    final totalSeconds = seconds.round();
+    final minutes = totalSeconds ~/ 60;
+    final remainder = totalSeconds % 60;
+    return minutes == 0
+        ? '$remainder s'
+        : '$minutes:${remainder.toString().padLeft(2, '0')}';
   }
 }
 
@@ -284,7 +310,7 @@ class _TargetPlayerCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              '2. Select the athlete',
+              '2. Athlete details',
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
@@ -314,6 +340,23 @@ class _TargetPlayerCard extends StatelessWidget {
                   ? null
                   : viewModel.selectTargetPlayer,
             ),
+            const SizedBox(height: 18),
+            TextField(
+              key: const Key('athlete-mass-field'),
+              enabled: !viewModel.isProcessing,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              onChanged: viewModel.updateAthleteMass,
+              decoration: InputDecoration(
+                labelText: 'Athlete body mass (optional)',
+                hintText: 'For example, 75',
+                suffixText: 'kg',
+                border: OutlineInputBorder(),
+                helperText: 'Only needed for estimated force (20–250 kg).',
+                errorText: viewModel.massError,
+              ),
+            ),
           ],
         ),
       ),
@@ -324,11 +367,13 @@ class _TargetPlayerCard extends StatelessWidget {
 class _ProgressPanel extends StatelessWidget {
   const _ProgressPanel({
     required this.progress,
+    required this.isValidating,
     required this.isCancelling,
     required this.onCancel,
   });
 
   final double progress;
+  final bool isValidating;
   final bool isCancelling;
   final VoidCallback onCancel;
 
@@ -349,6 +394,8 @@ class _ProgressPanel extends StatelessWidget {
               Text(
                 isCancelling
                     ? 'Cancelling analysis…'
+                    : isValidating
+                    ? 'Checking video compatibility…'
                     : hasMeasuredProgress
                     ? 'Processing video: $percentage%'
                     : 'Uploading and starting analysis…',
@@ -359,8 +406,10 @@ class _ProgressPanel extends StatelessWidget {
                 value: hasMeasuredProgress ? progress : null,
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Keep this screen open. Local processing may take several minutes.',
+              Text(
+                isValidating
+                    ? 'The service is checking the codec, resolution, frame rate and sample frames.'
+                    : 'Keep this screen open. Local processing may take several minutes.',
               ),
               const SizedBox(height: 12),
               OutlinedButton.icon(
@@ -394,21 +443,9 @@ class _ResultsPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Prototype results',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                ),
-                _ResultStatusChip(
-                  status: MetricStatus.experimental,
-                  text: result.courtCalibration == null
-                      ? 'Uncalibrated'
-                      : 'Estimated court mapping',
-                ),
-              ],
+            Text(
+              'Movement analysis results',
+              style: Theme.of(context).textTheme.titleLarge,
             ),
             if (result.courtCalibration case final calibration?) ...[
               const SizedBox(height: 12),
@@ -416,12 +453,14 @@ class _ResultsPanel extends StatelessWidget {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.grid_on_outlined),
                 title: Text(
-                  'Court mapped to ${calibration.widthMeters?.toStringAsFixed(2)} m '
-                  '× ${calibration.lengthMeters?.toStringAsFixed(2)} m',
+                  'Standard doubles court: '
+                  '${calibration.widthMeters?.toStringAsFixed(2)} m × '
+                  '${calibration.lengthMeters?.toStringAsFixed(2)} m',
                 ),
                 subtitle: Text(
-                  'Automatic line detection • ${(calibration.confidence * 100).round()}% '
-                  'detector confidence${result.inferenceDevice == null ? '' : ' • ${result.inferenceDevice}'}',
+                  'Mapped from detected court lines • '
+                  '${(calibration.confidence * 100).round()}% confidence'
+                  '${result.inferenceDevice == null ? '' : ' • ${result.inferenceDevice}'}',
                 ),
               ),
             ],
@@ -446,11 +485,41 @@ class _ResultsPanel extends StatelessWidget {
               const SizedBox(height: 16),
               _DirectionalMovement(player: player!),
               const SizedBox(height: 12),
-              _MovementPathCard(path: player.movementPath),
+              _TrackingCoverageCard(player: player, result: result),
               const SizedBox(height: 12),
               _MetricGrid(player: player),
               const SizedBox(height: 12),
-              _SpeedSamplesChart(result: result),
+              if (player.speed.unit != 'm/s')
+                const ListTile(
+                  leading: Icon(Icons.warning_amber_outlined),
+                  title: Text('Metre-based charts unavailable'),
+                  subtitle: Text(
+                    'Court calibration or metric tracking validation failed. '
+                    'Pixel curves are hidden. Recheck court lines and analyse again. '
+                    'Tracking coverage does not indicate calibration accuracy.',
+                  ),
+                )
+              else if (result.rawData['reportImages'] is List)
+                _ReportImages(result: result)
+              else ...[
+                _SpeedSamplesChart(result: result),
+                AccelerationChart(
+                  key: const Key('acceleration-profile-chart'),
+                  samples: player.acceleration.samples,
+                  unit: player.acceleration.unit ?? 'unknown',
+                ),
+              ],
+              if (player.deceleration.unit == 'm/s²')
+                Text(
+                  'Screened braking events: ${player.deceleration.events.length}. '
+                  'Prototype threshold: −2 m/s² for at least 0.2 s; not a fatigue score.',
+                ),
+              const SizedBox(height: 12),
+              const Text(
+                'Overall effort / fatigue: awaiting client-defined calculation and validation.',
+              ),
+              const SizedBox(height: 12),
+              ForceVelocityChart(analysis: player.forceVelocity),
             ],
             const SizedBox(height: 16),
             _ExportPanel(result: result),
@@ -475,14 +544,21 @@ class _ResultsPanel extends StatelessWidget {
   }
 }
 
-class _MovementPathCard extends StatelessWidget {
-  const _MovementPathCard({required this.path});
+class _TrackingCoverageCard extends StatelessWidget {
+  const _TrackingCoverageCard({required this.player, required this.result});
 
-  final MovementPath path;
+  final PlayerAnalysis player;
+  final AnalysisResult result;
 
   @override
   Widget build(BuildContext context) {
-    final hasPath = path.points.length >= 2;
+    final trackedFrames =
+        player.trackedFrames ?? player.movementPath.points.length;
+    final processedFrames =
+        result.processedFrames ?? result.inputVideo?.frameCount;
+    final coverage = processedFrames != null && processedFrames > 0
+        ? (trackedFrames / processedFrames).clamp(0.0, 1.0)
+        : null;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
@@ -495,45 +571,38 @@ class _MovementPathCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Icon(Icons.timeline_outlined),
+                const Icon(Icons.track_changes_outlined),
                 const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Movement path',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
+                Text(
+                  'Tracking coverage',
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
-                _ResultStatusChip(status: path.status),
               ],
             ),
             const SizedBox(height: 12),
-            if (hasPath)
-              SizedBox(
-                height: 220,
-                child: CustomPaint(
-                  key: const Key('movement-path-chart'),
-                  painter: _TrajectoryPainter(
-                    points: path.points,
-                    colour: Theme.of(context).colorScheme.primary,
-                    gridColour: Theme.of(context).colorScheme.outlineVariant,
-                  ),
-                  child: const SizedBox.expand(),
-                ),
-              )
-            else
-              const SizedBox(
-                height: 96,
-                child: Center(child: Text('No movement path available')),
-              ),
+            if (coverage != null) LinearProgressIndicator(value: coverage),
             const SizedBox(height: 8),
             Text(
-              hasPath
-                  ? '${path.points.length} tracked positions • '
-                        '${path.coordinateSystem == 'estimated_court_metres' ? 'Estimated court coordinates' : 'Image coordinates'}'
-                  : path.note ??
-                        'The current track has insufficient positions.',
+              processedFrames == null
+                  ? '$trackedFrames tracked frames'
+                  : '$trackedFrames of $processedFrames frames • '
+                        '${((coverage ?? 0) * 100).round()}%',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'This shows how much of the processed video contained a usable '
+              'position for the selected athlete.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
+            if (player.metricDurationSeconds case final double seconds) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Metric calculation covers ${seconds.toStringAsFixed(2)} s of screened intervals. '
+                '${player.excludedMetricSamples ?? 0} candidate samples excluded. '
+                'Distances exclude gaps and filter edges; they are not a full-session total.',
+              ),
+            ],
           ],
         ),
       ),
@@ -567,7 +636,6 @@ class _MetricGrid extends StatelessWidget {
                   player.totalDistance.unit,
                 ),
                 icon: Icons.route_outlined,
-                status: player.totalDistance.status,
                 note: player.totalDistance.note,
               ),
             ),
@@ -577,49 +645,7 @@ class _MetricGrid extends StatelessWidget {
                 label: 'Speed',
                 value: _formatSpeed(player.speed),
                 icon: Icons.speed_outlined,
-                status: player.speed.status,
                 note: player.speed.note,
-              ),
-            ),
-            SizedBox(
-              width: cardWidth,
-              child: _MetricTile(
-                label: 'Acceleration',
-                value: _formatMetric(
-                  player.acceleration.value,
-                  player.acceleration.unit,
-                ),
-                icon: Icons.trending_up,
-                status: player.acceleration.status,
-                note: player.acceleration.note,
-              ),
-            ),
-            SizedBox(
-              width: cardWidth,
-              child: _MetricTile(
-                label: 'Deceleration',
-                value: _formatMetric(
-                  player.deceleration.value,
-                  player.deceleration.unit,
-                ),
-                icon: Icons.trending_down,
-                status: player.deceleration.status,
-                note: player.deceleration.note,
-              ),
-            ),
-            SizedBox(
-              width: cardWidth,
-              child: _MetricTile(
-                label: 'Pixel effort index (demo)',
-                value: _formatMetric(
-                  player.overallEffort.value,
-                  player.overallEffort.unit,
-                ),
-                icon: Icons.science_outlined,
-                status: player.overallEffort.status,
-                note:
-                    player.overallEffort.note ??
-                    'Experimental motion proxy, not physiological load. Client validation pending.',
               ),
             ),
             SizedBox(
@@ -628,7 +654,6 @@ class _MetricGrid extends StatelessWidget {
                 label: 'Direction changes',
                 value: player.directionChanges.count?.toString() ?? '—',
                 icon: Icons.turn_sharp_right_outlined,
-                status: player.directionChanges.status,
                 note: player.directionChanges.note,
               ),
             ),
@@ -659,14 +684,12 @@ class _MetricTile extends StatelessWidget {
     required this.label,
     required this.value,
     required this.icon,
-    required this.status,
     this.note,
   });
 
   final String label;
   final String value;
   final IconData icon;
-  final MetricStatus status;
   final String? note;
 
   @override
@@ -687,12 +710,7 @@ class _MetricTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(child: Text(label)),
-                      _ResultStatusChip(status: status),
-                    ],
-                  ),
+                  Text(label),
                   const SizedBox(height: 4),
                   Text(value, style: Theme.of(context).textTheme.titleMedium),
                   if (note != null) ...[
@@ -709,45 +727,6 @@ class _MetricTile extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _ResultStatusChip extends StatelessWidget {
-  const _ResultStatusChip({required this.status, this.text});
-
-  final MetricStatus status;
-  final String? text;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final (background, foreground) = switch (status) {
-      MetricStatus.calibrated => (
-        colorScheme.primaryContainer,
-        colorScheme.onPrimaryContainer,
-      ),
-      MetricStatus.experimental => (
-        colorScheme.tertiaryContainer,
-        colorScheme.onTertiaryContainer,
-      ),
-      MetricStatus.unavailable => (
-        colorScheme.surfaceContainerLow,
-        colorScheme.onSurfaceVariant,
-      ),
-    };
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        text ?? status.label,
-        style: Theme.of(context).textTheme.labelSmall
-            ?.copyWith(color: foreground),
       ),
     );
   }
@@ -777,7 +756,7 @@ class _WarningsPanel extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Prototype limitations',
+                    'Analysis notes',
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                   const SizedBox(height: 4),
@@ -992,104 +971,6 @@ class _FullScreenVideoPageState extends State<_FullScreenVideoPage> {
   }
 }
 
-class _TrajectoryPainter extends CustomPainter {
-  const _TrajectoryPainter({
-    required this.points,
-    required this.colour,
-    required this.gridColour,
-    this.flipY = false,
-  });
-
-  final List<TrajectoryPoint> points;
-  final Color colour;
-  final Color gridColour;
-  final bool flipY;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const padding = 12.0;
-    final drawingRect = Rect.fromLTWH(
-      padding,
-      padding,
-      math.max(1, size.width - padding * 2),
-      math.max(1, size.height - padding * 2),
-    );
-    final gridPaint = Paint()
-      ..color = gridColour
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    canvas.drawRect(drawingRect, gridPaint);
-    for (var index = 1; index < 4; index += 1) {
-      final fraction = index / 4;
-      canvas.drawLine(
-        Offset(
-          drawingRect.left + drawingRect.width * fraction,
-          drawingRect.top,
-        ),
-        Offset(
-          drawingRect.left + drawingRect.width * fraction,
-          drawingRect.bottom,
-        ),
-        gridPaint,
-      );
-      canvas.drawLine(
-        Offset(
-          drawingRect.left,
-          drawingRect.top + drawingRect.height * fraction,
-        ),
-        Offset(
-          drawingRect.right,
-          drawingRect.top + drawingRect.height * fraction,
-        ),
-        gridPaint,
-      );
-    }
-
-    final minimumX = points.map((point) => point.x).reduce(math.min);
-    final maximumX = points.map((point) => point.x).reduce(math.max);
-    final minimumY = points.map((point) => point.y).reduce(math.min);
-    final maximumY = points.map((point) => point.y).reduce(math.max);
-    final xRange = math.max(1.0, maximumX - minimumX);
-    final yRange = math.max(1.0, maximumY - minimumY);
-
-    Offset scale(TrajectoryPoint point) {
-      return Offset(
-        drawingRect.left + ((point.x - minimumX) / xRange) * drawingRect.width,
-        drawingRect.top +
-            (flipY
-                    ? 1 - (point.y - minimumY) / yRange
-                    : (point.y - minimumY) / yRange) *
-                drawingRect.height,
-      );
-    }
-
-    final firstOffset = scale(points.first);
-    final path = Path()..moveTo(firstOffset.dx, firstOffset.dy);
-    for (final point in points.skip(1)) {
-      final offset = scale(point);
-      path.lineTo(offset.dx, offset.dy);
-    }
-    final trajectoryPaint = Paint()
-      ..color = colour
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    canvas.drawPath(path, trajectoryPaint);
-
-    final markerPaint = Paint()..color = colour;
-    canvas.drawCircle(firstOffset, 5, markerPaint);
-    canvas.drawCircle(scale(points.last), 7, markerPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _TrajectoryPainter oldDelegate) {
-    return oldDelegate.points != points ||
-        oldDelegate.colour != colour ||
-        oldDelegate.gridColour != gridColour;
-  }
-}
-
 class _ErrorPanel extends StatelessWidget {
   const _ErrorPanel({required this.message, required this.onRetry});
 
@@ -1121,11 +1002,11 @@ class _DirectionalMovement extends StatelessWidget {
     final metres = player.movementPath.coordinateSystem.contains('court');
     final entries = [
       (
-        metres ? 'Left-right movement' : 'Horizontal image movement',
+        metres ? 'Lateral movement' : 'Horizontal image movement',
         player.leftRightDistance,
       ),
       (
-        metres ? 'Forward-back movement' : 'Vertical image movement',
+        metres ? 'Forward/back movement' : 'Vertical image movement',
         player.forwardBackDistance,
       ),
     ];
@@ -1183,53 +1064,12 @@ class _SpeedSamplesChart extends StatelessWidget {
   final AnalysisResult result;
   @override
   Widget build(BuildContext context) {
-    final players = result.rawData['players'];
-    if (players is! List || players.isEmpty) return const SizedBox.shrink();
-    final speed = (players.first as Map)['speed'];
-    if (speed is! Map || speed['samples'] is! List) {
-      return const SizedBox.shrink();
-    }
-    final samples = (speed['samples'] as List)
-        .whereType<Map>()
-        .where((s) => s['timeSeconds'] is num && s['value'] is num)
-        .toList();
-    if (samples.length < 2) return const SizedBox.shrink();
-    final points = samples
-        .map(
-          (s) => TrajectoryPoint(
-            timeSeconds: (s['timeSeconds'] as num).toDouble(),
-            x: (s['timeSeconds'] as num).toDouble(),
-            y: (s['value'] as num).toDouble(),
-          ),
-        )
-        .toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          'Speed profile (${speed['unit'] ?? ''})',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          height: 160,
-          child: CustomPaint(
-            key: const Key('speed-profile-chart'),
-            painter: _TrajectoryPainter(
-              points: points,
-              flipY: true,
-              colour: Theme.of(context).colorScheme.primary,
-              gridColour: Theme.of(context).colorScheme.outlineVariant,
-            ),
-            child: const SizedBox.expand(),
-          ),
-        ),
-        Text(
-          'Elapsed time: ${points.first.x.toStringAsFixed(1)}–${points.last.x.toStringAsFixed(1)} s. '
-          'Speed increases upward. Export JSON for every time-stamped sample.',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-      ],
+    final player = result.playerById(result.selectedTrackId);
+    return AccelerationChart(
+      key: const Key('speed-profile-chart'),
+      title: 'Speed over time',
+      unit: player?.speed.unit ?? 'unknown',
+      samples: player?.speed.samples ?? const [],
     );
   }
 }
@@ -1239,6 +1079,62 @@ class _ExportPanel extends StatefulWidget {
   final AnalysisResult result;
   @override
   State<_ExportPanel> createState() => _ExportPanelState();
+}
+
+class _ReportImages extends StatelessWidget {
+  const _ReportImages({required this.result});
+  final AnalysisResult result;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Text(
+        'Metric reports — tap to enlarge. Tracking gaps are not joined. '
+        'Shaded bands indicate braking events, not measured fatigue.',
+      ),
+      for (final item in (result.rawData['reportImages'] as List))
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              children: [
+                Text(item['title'] as String),
+                InkWell(
+                  onTap: () => showDialog<void>(
+                    context: context,
+                    builder: (context) => Dialog.fullscreen(
+                      child: Scaffold(
+                        appBar: AppBar(title: Text(item['title'] as String)),
+                        body: InteractiveViewer(
+                          maxScale: 8,
+                          child: Center(child: _image(item['url'] as String)),
+                        ),
+                      ),
+                    ),
+                  ),
+                  child: _image(item['url'] as String),
+                ),
+              ],
+            ),
+          ),
+        ),
+    ],
+  );
+
+  Widget _image(String url) => Image.network(
+    url,
+    headers: {
+      if (AuthRepository.token != null)
+        'Authorization': 'Bearer ${AuthRepository.token}',
+    },
+    errorBuilder: (_, error, stack) => const Padding(
+      padding: EdgeInsets.all(16),
+      child: Text(
+        'Report image could not be loaded. Check your connection or sign in again.',
+      ),
+    ),
+  );
 }
 
 class _ExportPanelState extends State<_ExportPanel> {
@@ -1304,6 +1200,15 @@ class _ExportPanelState extends State<_ExportPanel> {
             icon: const Icon(Icons.download_outlined),
             label: const Text('Save annotated video'),
           ),
+          if (widget.result.rawData['reportArchiveUrl'] is String)
+            OutlinedButton.icon(
+              key: const Key('export-reports-button'),
+              onPressed: _busy
+                  ? null
+                  : () => _save(() => _service.saveReports(widget.result)),
+              icon: const Icon(Icons.folder_zip_outlined),
+              label: const Text('Save report images + data'),
+            ),
         ],
       ),
       if (_busy) const LinearProgressIndicator(),

@@ -21,13 +21,23 @@ void main() {
             ],
           },
           'overallEffort': {'status': 'unavailable'},
+          'forceVelocity': {
+            'status': 'experimental',
+            'maximumVelocityMps': 4.2,
+            'peakPropulsiveForceN': 120,
+            'peakBrakingForceN': 90,
+            'samples': [
+              {'timeSeconds': 1, 'velocityMps': 4.2, 'estimatedNetForceN': 120},
+            ],
+          },
         },
       ],
     }, analysisId: 'job-1');
     final service = AnalysisExportService();
     final csv = service.csvText(result);
     expect(csv, contains('"left_right_distance","3.0","px","experimental"'));
-    expect(csv, contains('"overall_effort","","","unavailable"'));
+    expect(csv, isNot(contains('"overall_effort"')));
+    expect(csv, contains('"estimated_peak_propulsive_force","120.0","N"'));
     final json = jsonDecode(service.jsonText(result));
     expect(json['analysisId'], 'job-1');
     expect(json['players'][0]['speed']['samples'][0]['value'], 5);

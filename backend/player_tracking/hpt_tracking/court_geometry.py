@@ -12,6 +12,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
+from .yuchen_court_detector import CourtDetector as YuchenCourtDetector
 
 
 Point = Tuple[float, float]
@@ -36,8 +37,8 @@ class CourtCalibration:
     def contains_player_position(
         self,
         point: Point,
-        side_margin_metres: float = 2.0,
-        baseline_margin_metres: float = 3.5,
+        side_margin_metres: float = 4.0,
+        baseline_margin_metres: float = 8.0,
     ) -> bool:
         """Allow normal run-off space while rejecting spectators and officials."""
 
@@ -52,7 +53,8 @@ class CourtCalibration:
     def as_dict(self) -> Dict:
         return {
             "status": "estimated",
-            "method": "multi_frame_hough_homography",
+            "method": "multi_frame_baseline_service_line_homography",
+            "limitations": "Fixed rear-court view; doubles sidelines and near service line required. Confidence measures repeatability, not metric accuracy.",
             "confidence": round(self.confidence, 3),
             "courtType": "doubles",
             "widthMeters": self.width_metres,
@@ -124,41 +126,31 @@ class CourtDetector:
         return (horizontal, sidelines)
 
     def detect_corners(self, frame: np.ndarray) -> Optional[np.ndarray]:
-        """Find far-left, far-right, near-right and near-left court corners."""
-
-        _horizontal, sidelines = self.filter_court_lines(
-            self.detect_court_lines(frame), frame.shape
-        )
-        negative = [line for line in sidelines if self._line_angle(line) < 0]
-        positive = [line for line in sidelines if self._line_angle(line) > 0]
-        if not negative or not positive:
-            return None
-
-        # The outer doubles sidelines are the longest converging line on each side.
-        left = max(negative, key=self._line_length)
-        right = max(positive, key=self._line_length)
-        left_top, left_bottom = self._top_and_bottom(left)
-        right_top, right_bottom = self._top_and_bottom(right)
-        corners = np.asarray(
-            [left_top, right_top, right_bottom, left_bottom], dtype=np.float32
-        )
+        """Use Yuchen's physical line intersections, not Hough segment endpoints."""
+        corners = YuchenCourtDetector().detect_court_corners_perspective(frame)
+        if corners is not None:
+            corners = np.asarray(corners, dtype=np.float32)
         return corners if self.validate_court_geometry(corners, frame.shape) else None
 
     def detect_from_frames(
         self, frames: Iterable[np.ndarray]
     ) -> Optional[CourtCalibration]:
-        """Use median corners from several frames to suppress Hough-line noise."""
+        """Choose Yuchen's best model-supported fit, retaining geometry checks."""
 
         frame_list = [frame for frame in frames if frame is not None]
-        detections = [
-            corners
-            for frame in frame_list
-            if (corners := self.detect_corners(frame)) is not None
-        ]
+        scored = []
+        detector = YuchenCourtDetector()
+        for frame in frame_list:
+            corners, score = detector.detect_court_with_score(frame)
+            if corners is not None:
+                corners = np.asarray(corners, dtype=np.float32)
+                if self.validate_court_geometry(corners, frame.shape):
+                    scored.append((score, corners))
+        detections = [corners for _, corners in scored]
         if not detections:
             return None
 
-        median_corners = np.median(np.stack(detections), axis=0).astype(np.float32)
+        median_corners = max(scored, key=lambda item: item[0])[1]
         if not self.validate_court_geometry(median_corners, frame_list[0].shape):
             return None
 
@@ -185,7 +177,7 @@ class CourtDetector:
     ) -> bool:
         """Reject crossed, tiny, upside-down or off-frame quadrilaterals."""
 
-        if corners is None or corners.shape != (4, 2):
+        if corners is None or corners.shape != (4, 2) or not np.all(np.isfinite(corners)):
             return False
         height, width = frame_shape[:2]
         far_left, far_right, near_right, near_left = corners
@@ -197,14 +189,14 @@ class CourtDetector:
         polygon_area = abs(float(cv2.contourArea(corners)))
         points_inside_extended_frame = all(
             -0.05 * width <= x <= 1.05 * width
-            and 0.35 * height <= y <= 1.05 * height
+            and 0.05 * height <= y <= 1.05 * height
             for x, y in corners
         )
         return (
             points_inside_extended_frame
             and far_width >= 0.08 * width
             and near_width >= 0.45 * width
-            and near_width > far_width * 1.8
+            and near_width > far_width * 1.1
             and vertical_span >= 0.2 * height
             and polygon_area >= 0.12 * width * height
         )
@@ -228,7 +220,10 @@ class CourtDetector:
             ],
             dtype=np.float32,
         )
-        return cv2.getPerspectiveTransform(corners.astype(np.float32), target_points)
+        matrix = cv2.getPerspectiveTransform(corners.astype(np.float32), target_points)
+        if not np.all(np.isfinite(matrix)) or abs(np.linalg.det(matrix)) < 1e-12:
+            return None
+        return matrix
 
     @staticmethod
     def _line_angle(line: Line) -> float:
