@@ -515,13 +515,7 @@ class _ResultsPanel extends StatelessWidget {
                   'Prototype threshold: −2 m/s² for at least 0.2 s; not a fatigue score.',
                 ),
               const SizedBox(height: 12),
-              ListTile(
-                title: const Text('Overall effort (experimental movement load)'),
-                subtitle: Text(player.overallEffort.method == 'metric_motion_load_v1' &&
-                        player.overallEffort.value != null
-                    ? '${player.overallEffort.value!.toStringAsFixed(1)} AU · ${player.overallEffort.note ?? ""}'
-                    : 'Unavailable. A newly analysed clip with continuous, calibrated movement is required.'),
-              ),
+              _EffortTable(metric: player.overallEffort),
               const SizedBox(height: 12),
               ForceVelocityChart(analysis: player.forceVelocity),
             ],
@@ -544,6 +538,56 @@ class _ResultsPanel extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _EffortTable extends StatelessWidget {
+  const _EffortTable({required this.metric});
+  final NumericMetric metric;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    String number(double? v) => v != null && v.isFinite ? v.toStringAsFixed(3) : '—';
+    TableRow row(String label, String value, {bool header = false, bool total = false}) {
+      final style = theme.textTheme.bodyMedium?.copyWith(
+        fontWeight: header || total ? FontWeight.bold : FontWeight.normal,
+      );
+      return TableRow(
+        decoration: BoxDecoration(color: header ? colors.surfaceContainerHighest : null),
+        children: [
+          for (final (text, align) in [(label, TextAlign.start), (value, TextAlign.end)])
+            Padding(padding: const EdgeInsets.all(8), child: Text(text, textAlign: align, style: style)),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Overall effort (experimental movement load)', style: theme.textTheme.titleMedium),
+        const SizedBox(height: 8),
+        if (metric.method == 'metric_motion_load_v1' && metric.value?.isFinite == true) ...[
+          Table(
+            columnWidths: const {0: FlexColumnWidth(2), 1: FlexColumnWidth()},
+            border: TableBorder.all(color: colors.outlineVariant),
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            children: [
+              row('Measure', 'Value', header: true),
+              row('Usable seconds', number(metric.details['validSeconds'])),
+              row('Speed contribution in AU', number(metric.details['speedAU'])),
+              row('Acceleration contribution in AU', number(metric.details['accelerationAU'])),
+              row('Braking contribution in AU', number(metric.details['brakingAU'])),
+              row('AU per valid minute', number(metric.details['auPerValidMinute'])),
+              row('Total load in AU', number(metric.value), total: true),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(metric.note ?? 'External movement only; not fatigue or calories.'),
+        ] else
+          const Text('Unavailable. A newly analysed clip with continuous, calibrated movement is required.'),
+      ],
     );
   }
 }
