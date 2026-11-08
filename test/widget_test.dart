@@ -73,6 +73,7 @@ void main() {
     expect(find.text('Heatmap'), findsNothing);
     expect(find.text('Directional movement'), findsOneWidget);
     expect(find.text('Pixel effort index (demo)'), findsNothing);
+    expect(find.textContaining('10.0 AU ·'), findsOneWidget);
     expect(find.text('3. Review prototype scope'), findsNothing);
     expect(
       find.text('Estimated Force-Velocity'),
@@ -180,10 +181,11 @@ class _ImmediateGateway implements AnalysisGateway {
             'trackId': '0',
             'trackedFrames': 80,
             'overallEffort': {
+              'method': 'metric_motion_load_v1',
               'status': 'experimental',
               'value': 10,
               'unit': 'AU',
-              'note': 'Unvalidated pixel-motion proxy.',
+              'note': 'External movement only.',
             },
             'movementPath': {
               'status': 'experimental',

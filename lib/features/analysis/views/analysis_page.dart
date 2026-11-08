@@ -515,8 +515,12 @@ class _ResultsPanel extends StatelessWidget {
                   'Prototype threshold: −2 m/s² for at least 0.2 s; not a fatigue score.',
                 ),
               const SizedBox(height: 12),
-              const Text(
-                'Overall effort / fatigue: awaiting client-defined calculation and validation.',
+              ListTile(
+                title: const Text('Overall effort (experimental movement load)'),
+                subtitle: Text(player.overallEffort.method == 'metric_motion_load_v1' &&
+                        player.overallEffort.value != null
+                    ? '${player.overallEffort.value!.toStringAsFixed(1)} AU · ${player.overallEffort.note ?? ""}'
+                    : 'Unavailable. A newly analysed clip with continuous, calibrated movement is required.'),
               ),
               const SizedBox(height: 12),
               ForceVelocityChart(analysis: player.forceVelocity),
