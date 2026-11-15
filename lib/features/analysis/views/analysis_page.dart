@@ -550,6 +550,14 @@ class _EffortTable extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    const explanations = {
+      'Usable seconds': 'Time included in this calculation, not the full video length. Unusable gaps are excluded.',
+      'Speed contribution in AU': 'Points from movement over time. Faster movement adds more points per second. This is not a speed reading.',
+      'Acceleration contribution in AU': 'Points from speeding up, based on how strongly and for how long. Not a count of accelerations.',
+      'Braking contribution in AU': 'Points from slowing down. Braking adds to the total rather than cancelling speeding up.',
+      'AU per valid minute': 'Average points per minute of usable time: total divided by usable seconds, multiplied by 60. Not added to the total.',
+      'Total load in AU': 'Speed, speeding-up and braking points combined for this tracked player. Longer usable clips can have higher totals.',
+    };
     String number(double? v) => v != null && v.isFinite ? v.toStringAsFixed(3) : '—';
     TableRow row(String label, String value, {bool header = false, bool total = false}) {
       final style = theme.textTheme.bodyMedium?.copyWith(
@@ -558,8 +566,18 @@ class _EffortTable extends StatelessWidget {
       return TableRow(
         decoration: BoxDecoration(color: header ? colors.surfaceContainerHighest : null),
         children: [
-          for (final (text, align) in [(label, TextAlign.start), (value, TextAlign.end)])
-            Padding(padding: const EdgeInsets.all(8), child: Text(text, textAlign: align, style: style)),
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: style),
+              if (explanations[label] case final String explanation) ...[
+                const SizedBox(height: 4),
+                Text(explanation, style: theme.textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant, height: 1.4)),
+              ],
+            ]),
+          ),
+          Padding(padding: const EdgeInsets.all(8), child: Text(value, textAlign: TextAlign.end, style: style)),
         ],
       );
     }
@@ -569,6 +587,14 @@ class _EffortTable extends StatelessWidget {
         Text('Overall effort (experimental movement load)', style: theme.textTheme.titleMedium),
         const SizedBox(height: 8),
         if (metric.method == 'metric_motion_load_v1' && metric.value?.isFinite == true) ...[
+          Text(
+            'AU means arbitrary units: movement points defined by this experimental model. '
+            'One second of steady movement at 2 m/s gives 1 AU. '
+            'These points are not calories, a fatigue measure or a score out of 100.',
+            key: const Key('effort-au-explanation'),
+            style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant, height: 1.4),
+          ),
+          const SizedBox(height: 8),
           Table(
             columnWidths: const {0: FlexColumnWidth(2), 1: FlexColumnWidth()},
             border: TableBorder.all(color: colors.outlineVariant),

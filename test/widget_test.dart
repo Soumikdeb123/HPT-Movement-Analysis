@@ -74,10 +74,19 @@ void main() {
     expect(find.text('Directional movement'), findsOneWidget);
     expect(find.text('Pixel effort index (demo)'), findsNothing);
     final table = tester.widget<Table>(find.ancestor(of: find.text('Total load in AU'), matching: find.byType(Table)));
-    final cells = table.children.map((row) => row.children.map((c) => (c as Padding).child as Text).toList()).toList();
+    final cells = table.children.map((row) => [
+      (((row.children.first as Padding).child as Column).children.first as Text),
+      (row.children.last as Padding).child as Text,
+    ]).toList();
     expect(cells.map((r) => r.last.data), ['Value', '12.000', '7.000', '2.000', '1.000', '50.000', '10.000']);
     expect(cells.last.first.data, 'Total load in AU');
     expect(cells.last.every((text) => text.style?.fontWeight == FontWeight.bold), isTrue);
+    expect(find.byKey(const Key('effort-au-explanation')), findsOneWidget);
+    expect(find.textContaining('not calories, a fatigue measure'), findsOneWidget);
+    for (final row in table.children.skip(1)) {
+      final label = (row.children.first as Padding).child as Column;
+      expect(label.children.whereType<Text>().length, 2);
+    }
     expect(find.text('3. Review prototype scope'), findsNothing);
     expect(
       find.text('Estimated Force-Velocity'),
