@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../../../core/config/api_endpoints.dart';
+
 class AuthException implements Exception {
   const AuthException(this.message);
 
@@ -12,10 +14,7 @@ class AuthException implements Exception {
 }
 
 class AuthRepository {
-  static const String baseUrl = String.fromEnvironment(
-    'HPT_AUTH_API_URL',
-    defaultValue: 'http://10.0.2.2:3000',
-  );
+  static final String baseUrl = ApiEndpoints.auth;
 
   static const String registerPath = '/api/auth/signIn';
   static const String loginPath = '/api/auth/login';

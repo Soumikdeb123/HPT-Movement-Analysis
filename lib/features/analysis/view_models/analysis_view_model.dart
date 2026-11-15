@@ -5,6 +5,7 @@ import '../models/analysis_result.dart';
 import '../repositories/analysis_gateway.dart';
 import '../repositories/http_analysis_gateway.dart';
 import '../services/analysis_video_picker.dart';
+import '../services/analysis_notification_service.dart';
 
 enum AnalysisStatus {
   idle,
@@ -153,6 +154,12 @@ class AnalysisViewModel extends ChangeNotifier {
           completedResult.inputVideo ?? validatedVideoMetadata;
       progress = 1;
       status = AnalysisStatus.completed;
+
+      try {
+        await AnalysisNotificationService.instance.showAnalysisComplete();
+      } catch (error) {
+        debugPrint('Could not show analysis completion notification: $error');
+      }
     } on AnalysisCancelledException {
       if (operationGeneration != _operationGeneration) return;
       _resetFields();
