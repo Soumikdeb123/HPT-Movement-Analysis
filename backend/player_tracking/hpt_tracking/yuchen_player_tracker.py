@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-from ultralytics import YOLO
 from scipy.spatial.distance import euclidean
 from typing import List, Dict, Tuple, Optional
 import json
@@ -59,6 +58,7 @@ class PlayerTracker:
             max_disappeared: Maximum number of frames a track may be missing
                 before it is removed.
         """
+        from ultralytics import YOLO
         self.model = YOLO(model_path)
         self.tracks: Dict[int, PlayerTrack] = {}
         self.next_track_id = 0

@@ -9,7 +9,7 @@ from urllib.request import Request as UrlRequest, urlopen
 from urllib.error import HTTPError, URLError
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -79,7 +79,6 @@ def create_app(
         allow_headers=["*"],
     )
     app.state.job_manager = manager
-    owners = {}
 
     def authenticated_user(request: Request) -> str:
         if configured_settings.auth_url is None:
@@ -93,17 +92,20 @@ def create_app(
                 headers={"Authorization": authorization},
             )
             with urlopen(upstream, timeout=10) as response:
-                email = json.load(response).get("email")
+                identity = json.load(response)
+                user_id = identity.get("id")
+                email = identity.get("email")
             if not isinstance(email, str) or not email:
                 raise HTTPException(status_code=401, detail="Invalid session. Please sign in again.")
-            return email
+            return f"user:{user_id}" if isinstance(user_id, int) and user_id > 0 else f"email:{email}"
         except HTTPError as error:
             raise HTTPException(status_code=401, detail="Session expired. Please sign in again.") from error
         except (URLError, TimeoutError, ValueError) as error:
             raise HTTPException(status_code=503, detail="Authentication service unavailable.") from error
 
     def check_owner(job_id: str, user: str):
-        if owners.get(job_id) != user:
+        job = manager.get_job(job_id)
+        if job is None or job.owner != user:
             raise HTTPException(status_code=404, detail="Analysis job was not found.")
 
 
@@ -198,9 +200,17 @@ def create_app(
             target_player=target_player,
             athlete_mass_kg=athlete_mass_kg,
             input_video=input_video.to_dict(),
+            owner=user,
         )
-        owners[job.snapshot()["analysisId"]] = user
         return job.snapshot()
+
+    @app.get("/api/analyses")
+    async def list_analyses(
+        user: str = Depends(authenticated_user),
+        limit: int = Query(20, ge=1, le=100),
+        offset: int = Query(0, ge=0),
+    ) -> dict:
+        return manager.history.list(user, limit, offset)
 
     @app.get("/api/analyses/{job_id}")
     async def get_analysis(request: Request, job_id: str, user: str = Depends(authenticated_user)) -> dict:

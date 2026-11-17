@@ -6,6 +6,7 @@ from math import isfinite
 import numpy as np
 from .yuchen_player_tracker import PlayerTracker, PlayerDetection
 from .metric_motion import metrics_from_series, valid_mass
+from .metric_effort import metric_effort
 
 
 def analyse_metric_motion(samples, fps, athlete_mass_kg, confidence):
@@ -13,7 +14,7 @@ def analyse_metric_motion(samples, fps, athlete_mass_kg, confidence):
              'velocityUnit': 'm/s', 'forceUnit': 'N',
              'note': 'Valid court calibration and continuous metric positions are required.'}
     result = {'metrics': None, 'forceVelocity': force}
-    if not isfinite(fps) or fps <= 0 or confidence < .7 or not samples:
+    if not isfinite(fps) or fps <= 0 or not isfinite(confidence) or confidence < .7 or not samples:
         return result
     if any(not all(isfinite(v) for v in p) for p in samples):
         return result
@@ -68,6 +69,7 @@ def analyse_metric_motion(samples, fps, athlete_mass_kg, confidence):
                'meanDecelerationMps2': e['mean_deceleration_mps2'], 'highIntensity': e['high_intensity']}
               for e in track.deceleration_efforts]
     metrics = metrics_from_series(series, fps, events, max(0, len(samples)-len(series)))
+    metrics['overallEffort'] = metric_effort(series)
     note = ('Cumulative displacement of a 9-detection moving average; '
             '12 m/s jumps reset distance smoothing. Speed/acceleration use median-5 and '
             '0.7 s quadratic Savitzky–Golay filters, splitting gaps >5 frames. '

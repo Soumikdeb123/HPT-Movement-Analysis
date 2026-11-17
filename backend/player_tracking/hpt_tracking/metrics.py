@@ -86,7 +86,7 @@ def analyse_trajectory(
             },
             "leftRightDistance": _unavailable_metric(reason),
             "forwardBackDistance": _unavailable_metric(reason),
-            "overallEffort": _unavailable_metric("Effort formula awaiting client validation."),
+            "overallEffort": _unavailable_metric("Continuous calibrated metric motion required."),
             "totalDistance": _unavailable_metric(reason),
             "speed": {
                 "status": "unavailable",
@@ -243,7 +243,7 @@ def analyse_trajectory(
             "unit": distance_unit,
             "note": measurement_note,
         },
-        "overallEffort": _unavailable_metric("Effort formula awaiting client validation."),
+        "overallEffort": _unavailable_metric("Continuous calibrated metric motion required."),
         "totalDistance": {
             "status": "experimental",
             "value": round(sum(distances), 3),
