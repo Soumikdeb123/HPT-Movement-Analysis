@@ -6,6 +6,7 @@ require('dotenv').config({
 
 const express = require('express');
 const db = require('./db');
+const { checkDatabase, explainDatabaseError } = require('./scripts/check-db');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -29,39 +30,23 @@ app.get('/health', async (req, res) => {
 async function start() {
     try {
         if (!process.env.TOKEN || process.env.TOKEN.length < 32) {
-            throw new Error(' ');
+            throw new Error('Set TOKEN in auth/.env to a random secret of at least 32 characters.');
         }
 
-        await db.query('SELECT id FROM users LIMIT 1');
+        await checkDatabase();
 
+        if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD) {
+            const [existing] = await db.query('SELECT id FROM users WHERE email = ?',
+                [process.env.ADMIN_EMAIL.trim().toLowerCase()]);
+            if (!existing.length) {
+                const hash = await require('bcryptjs').hash(process.env.ADMIN_PASSWORD, 10);
+                await db.query(`INSERT INTO users (username, email, passwordHash, role, status)
+                    VALUES (?, ?, ?, 'admin', 'registered')`,
+                    ['Administrator', process.env.ADMIN_EMAIL.trim().toLowerCase(), hash]);
+            }
+        }
         const authRouter = require('./routes/auth');
-        const verifyToken = require('./middleware/verifyToken');
-        app.get('/api/auth/session', verifyToken, async (req, res) => {
-            try {
-                const [users] = await db.query(
-                    'SELECT email FROM users WHERE email = ? AND status != ?',
-                    [req.user.email, 'deleted']
-                );
-                if (!users.length) return res.status(401).json({ error: 'Invalid session' });
-                res.json({ email: users[0].email });
-            } catch (_) {
-                res.status(503).json({ error: 'Authentication unavailable' });
-            }
-        });
-
-        app.use('/api/auth', (req, res, next) => {
-            const allowed =
-                req.method === 'POST' &&
-                ['/signIn', '/login'].includes(req.path);
-
-            if (!allowed) {
-                return res.status(404).json({
-                    error: 'This endpoint is not enabled'
-                });
-            }
-
-            next();
-        }, authRouter);
+        app.use('/api/auth', authRouter);
 
         app.use((error, req, res, next) => {
             if (error.type === 'entity.parse.failed') {
@@ -70,10 +55,13 @@ async function start() {
                 });
             }
 
-            console.error(error.message);
-            res.status(500).json({
-                error: 'Internal server error'
-            });
+            if (error.code === 'ER_DUP_ENTRY') {
+                return res.status(409).json({ error: 'This email is already registered.' });
+            }
+            const status = Number.isInteger(error.status) && error.status >= 400 && error.status < 500
+                ? error.status : 500;
+            if (status === 500) console.error(error.message);
+            res.status(status).json({ error: status === 500 ? 'Internal server error' : error.message });
         });
 
         const server = app.listen(port, '0.0.0.0', () => {
@@ -86,8 +74,7 @@ async function start() {
             process.exit(1);
         });
     } catch (error) {
-        console.error('Start Failed');
-        console.dir(error, { depth: null });
+        console.error('Start failed: ' + explainDatabaseError(error));
         await db.end();
         process.exitCode = 1;
     }

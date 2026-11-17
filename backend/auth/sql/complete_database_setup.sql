@@ -8,10 +8,12 @@ USE user_information;
 
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(80) NOT NULL DEFAULT '',
+    token_version INT NOT NULL DEFAULT 0,
     email VARCHAR(255) NOT NULL UNIQUE,
     passwordHash VARCHAR(255) NOT NULL,
     role ENUM('user', 'admin') DEFAULT 'user',
-    status ENUM('registered', 'active', 'deleted', 'email_updated') DEFAULT 'registered',
+    status ENUM('registered', 'active', 'deleted', 'email_updated', 'disabled') DEFAULT 'registered',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
