@@ -41,7 +41,9 @@ class AnalysisExportService {
       metric('forward_back_distance', player.forwardBackDistance);
       metric('peak_acceleration', player.acceleration);
       metric('peak_deceleration', player.deceleration);
-      metric('overall_effort_pending_client_definition', player.overallEffort);
+      if (player.overallEffort.method == 'metric_motion_load_v1') {
+        metric('metric_motion_load_v1', player.overallEffort);
+      }
       void series(String label, List<MetricSample> points, String? unit) {
         for (final p in points) {
           rows.add([

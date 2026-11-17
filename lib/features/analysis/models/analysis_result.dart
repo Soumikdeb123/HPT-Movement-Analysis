@@ -99,6 +99,8 @@ class MovementPath {
 
 class NumericMetric {
   const NumericMetric({
+    this.details = const {},
+    this.method,
     required this.status,
     this.value,
     this.unit,
@@ -109,6 +111,12 @@ class NumericMetric {
 
   factory NumericMetric.fromJson(Map<String, dynamic> json) {
     return NumericMetric(
+      details: {
+        if (json['method'] == 'metric_motion_load_v1')
+          for (final key in ['validSeconds', 'speedAU', 'accelerationAU', 'brakingAU', 'auPerValidMinute'])
+            key: _doubleFromJson(json[key]),
+      },
+      method: json['method'] as String?,
       status: MetricStatus.fromJson(json['status']),
       value: _doubleFromJson(json['value']),
       samples: MetricSample.parse(json['samples']),
@@ -121,6 +129,8 @@ class NumericMetric {
     );
   }
 
+  final String? method;
+  final Map<String, double?> details;
   final MetricStatus status;
   final double? value;
   final List<MetricSample> samples;

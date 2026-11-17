@@ -116,7 +116,8 @@ def test_upload_poll_download_and_delete(tmp_path):
         delete_response = client.delete(f"/api/analyses/{analysis_id}")
         assert delete_response.status_code == 204
         assert client.get(f"/api/analyses/{analysis_id}").status_code == 404
-        assert list(tmp_path.iterdir()) == []
+        assert [p.name for p in tmp_path.iterdir()] == ['history.sqlite3']
+        assert client.get('/api/analyses').json()['items'] == []
 
 
 def test_rejects_unsupported_files(tmp_path):
@@ -148,7 +149,8 @@ def test_rejects_a_non_video_with_a_video_extension_before_queueing(tmp_path):
 
     assert response.status_code == 422
     assert "could not open" in response.json()["detail"]
-    assert list(tmp_path.iterdir()) == []
+    assert [p.name for p in tmp_path.iterdir()] == ['history.sqlite3']
+    assert app.state.job_manager.history.list('local-test')['items'] == []
 
 
 def test_rejects_unknown_target_player(tmp_path):

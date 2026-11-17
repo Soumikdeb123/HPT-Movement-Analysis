@@ -39,11 +39,11 @@ async function start() {
         app.get('/api/auth/session', verifyToken, async (req, res) => {
             try {
                 const [users] = await db.query(
-                    'SELECT email FROM users WHERE email = ? AND status != ?',
+                    'SELECT id, email FROM users WHERE email = ? AND status != ?',
                     [req.user.email, 'deleted']
                 );
                 if (!users.length) return res.status(401).json({ error: 'Invalid session' });
-                res.json({ email: users[0].email });
+                res.json({ id: users[0].id, email: users[0].email });
             } catch (_) {
                 res.status(503).json({ error: 'Authentication unavailable' });
             }

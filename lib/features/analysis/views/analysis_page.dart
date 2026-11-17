@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../auth/repositories/auth_repository.dart';
+import '../../history/views/analysis_history_page.dart';
 import '../services/analysis_export_service.dart';
 import '../models/analysis_request.dart';
 import '../models/analysis_result.dart';
@@ -32,6 +33,13 @@ class AnalysisPage extends StatefulWidget {
 }
 
 class _AnalysisPageState extends State<AnalysisPage> {
+  Future<void> _openHistory() async {
+    final expired = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const AnalysisHistoryPage()),
+    );
+    if (mounted && expired == true) widget.onSignOut?.call();
+  }
+
   late final AnalysisGateway _gateway;
   late final bool _ownsGateway;
   late final AnalysisViewModel viewModel;
@@ -65,6 +73,12 @@ class _AnalysisPageState extends State<AnalysisPage> {
           appBar: AppBar(
             title: const Text('HPT Player Analysis'),
             actions: [
+              IconButton(
+                tooltip: 'Analysis History',
+                onPressed: viewModel.isProcessing || viewModel.isSelectingVideo
+                    ? null : _openHistory,
+                icon: const Icon(Icons.history),
+              ),
               if (widget.onSignOut != null)
                 IconButton(
                   tooltip: 'Sign out',
@@ -126,7 +140,10 @@ class _AnalysisPageState extends State<AnalysisPage> {
                         ],
                         if (viewModel.status == AnalysisStatus.completed) ...[
                           const SizedBox(height: 24),
-                          _ResultsPanel(viewModel: viewModel),
+                          AnalysisResultsView(
+                            result: viewModel.result!,
+                            targetPlayerLabel: viewModel.targetPlayer.label,
+                          ),
                           if (viewModel.errorMessage != null)
                             Text(
                               viewModel.errorMessage!,
@@ -138,7 +155,7 @@ class _AnalysisPageState extends State<AnalysisPage> {
                           TextButton(
                             key: const Key('clear-analysis-button'),
                             onPressed: viewModel.clearAnalysis,
-                            child: const Text('Clear result and start over'),
+                            child: const Text('Start a new analysis'),
                           ),
                         ],
                         if (viewModel.isClearingResult) ...[
@@ -426,15 +443,16 @@ class _ProgressPanel extends StatelessWidget {
   }
 }
 
-class _ResultsPanel extends StatelessWidget {
-  const _ResultsPanel({required this.viewModel});
+class AnalysisResultsView extends StatelessWidget {
+  const AnalysisResultsView({super.key, required this.result,
+    required this.targetPlayerLabel});
 
-  final AnalysisViewModel viewModel;
+  final AnalysisResult result;
+  final String targetPlayerLabel;
 
   @override
   Widget build(BuildContext context) {
-    final result = viewModel.result!;
-    final player = viewModel.selectedPlayer;
+    final player = result.playerById(result.selectedTrackId);
 
     return Card(
       key: const Key('analysis-results'),
@@ -479,7 +497,7 @@ class _ResultsPanel extends StatelessWidget {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.person_search_outlined),
-                title: Text(viewModel.targetPlayer.label),
+                title: Text(targetPlayerLabel),
                 subtitle: const Text('Selected athlete movement report'),
               ),
               const SizedBox(height: 16),
@@ -515,9 +533,7 @@ class _ResultsPanel extends StatelessWidget {
                   'Prototype threshold: −2 m/s² for at least 0.2 s; not a fatigue score.',
                 ),
               const SizedBox(height: 12),
-              const Text(
-                'Overall effort / fatigue: awaiting client-defined calculation and validation.',
-              ),
+              _EffortTable(metric: player.overallEffort),
               const SizedBox(height: 12),
               ForceVelocityChart(analysis: player.forceVelocity),
             ],
@@ -540,6 +556,82 @@ class _ResultsPanel extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _EffortTable extends StatelessWidget {
+  const _EffortTable({required this.metric});
+  final NumericMetric metric;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    const explanations = {
+      'Usable seconds': 'Time included in this calculation, not the full video length. Unusable gaps are excluded.',
+      'Speed contribution in AU': 'Points from movement over time. Faster movement adds more points per second. This is not a speed reading.',
+      'Acceleration contribution in AU': 'Points from speeding up, based on how strongly and for how long. Not a count of accelerations.',
+      'Braking contribution in AU': 'Points from slowing down. Braking adds to the total rather than cancelling speeding up.',
+      'AU per valid minute': 'Average points per minute of usable time: total divided by usable seconds, multiplied by 60. Not added to the total.',
+      'Total load in AU': 'Speed, speeding-up and braking points combined for this tracked player. Longer usable clips can have higher totals.',
+    };
+    String number(double? v) => v != null && v.isFinite ? v.toStringAsFixed(3) : '—';
+    TableRow row(String label, String value, {bool header = false, bool total = false}) {
+      final style = theme.textTheme.bodyMedium?.copyWith(
+        fontWeight: header || total ? FontWeight.bold : FontWeight.normal,
+      );
+      return TableRow(
+        decoration: BoxDecoration(color: header ? colors.surfaceContainerHighest : null),
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: style),
+              if (explanations[label] case final String explanation) ...[
+                const SizedBox(height: 4),
+                Text(explanation, style: theme.textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant, height: 1.4)),
+              ],
+            ]),
+          ),
+          Padding(padding: const EdgeInsets.all(8), child: Text(value, textAlign: TextAlign.end, style: style)),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Overall effort (experimental movement load)', style: theme.textTheme.titleMedium),
+        const SizedBox(height: 8),
+        if (metric.method == 'metric_motion_load_v1' && metric.value?.isFinite == true) ...[
+          Text(
+            'AU means arbitrary units: movement points defined by this experimental model. '
+            'One second of steady movement at 2 m/s gives 1 AU. '
+            'These points are not calories, a fatigue measure or a score out of 100.',
+            key: const Key('effort-au-explanation'),
+            style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant, height: 1.4),
+          ),
+          const SizedBox(height: 8),
+          Table(
+            columnWidths: const {0: FlexColumnWidth(2), 1: FlexColumnWidth()},
+            border: TableBorder.all(color: colors.outlineVariant),
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            children: [
+              row('Measure', 'Value', header: true),
+              row('Usable seconds', number(metric.details['validSeconds'])),
+              row('Speed contribution in AU', number(metric.details['speedAU'])),
+              row('Acceleration contribution in AU', number(metric.details['accelerationAU'])),
+              row('Braking contribution in AU', number(metric.details['brakingAU'])),
+              row('AU per valid minute', number(metric.details['auPerValidMinute'])),
+              row('Total load in AU', number(metric.value), total: true),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(metric.note ?? 'External movement only; not fatigue or calories.'),
+        ] else
+          const Text('Unavailable. A newly analysed clip with continuous, calibrated movement is required.'),
+      ],
     );
   }
 }
