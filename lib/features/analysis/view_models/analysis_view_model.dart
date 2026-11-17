@@ -190,20 +190,11 @@ class AnalysisViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Reset the form only. Saved jobs are deleted explicitly from History.
   Future<void> clearAnalysis() async {
-    final completedResult = result;
-    if (completedResult == null || isClearingResult) return;
-
-    status = AnalysisStatus.clearingResult;
-    notifyListeners();
-    await Future<void>.delayed(Duration.zero);
-    try {
-      await _gateway.deleteAnalysis(completedResult.analysisId);
-      _resetFields();
-    } on Object catch (error) {
-      status = AnalysisStatus.completed;
-      errorMessage = 'Could not clear the saved result. $error';
-    }
+    if (result == null || isProcessing || isClearingResult) return;
+    ++_operationGeneration;
+    _resetFields();
     notifyListeners();
   }
 

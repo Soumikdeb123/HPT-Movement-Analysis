@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../auth/repositories/auth_repository.dart';
+import '../../auth/views/account_page.dart';
 import '../services/analysis_export_service.dart';
 import '../models/analysis_request.dart';
 import '../models/analysis_result.dart';
@@ -56,6 +57,18 @@ class _AnalysisPageState extends State<AnalysisPage> {
     super.dispose();
   }
 
+  Future<void> _openAccount() async {
+    final shouldSignOut = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const AccountPage()),
+    );
+    if (!mounted) return;
+    if (shouldSignOut == true) {
+      widget.onSignOut?.call();
+    } else {
+      setState(() {});
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -65,15 +78,20 @@ class _AnalysisPageState extends State<AnalysisPage> {
           appBar: AppBar(
             title: const Text('HPT Player Analysis'),
             actions: [
-              if (widget.onSignOut != null)
-                IconButton(
-                  tooltip: 'Sign out',
-                  onPressed:
-                      viewModel.isProcessing || viewModel.isClearingResult
-                      ? null
-                      : widget.onSignOut,
-                  icon: const Icon(Icons.logout),
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: IconButton(
+                  tooltip: 'Profile',
+                  onPressed: viewModel.isProcessing || viewModel.isClearingResult ||
+                      viewModel.isSelectingVideo ? null : _openAccount,
+                  icon: CircleAvatar(
+                    radius: 18,
+                    backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                    child: Icon(Icons.person, size: 24,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer),
+                  ),
                 ),
+              ),
             ],
           ),
           body: SafeArea(
@@ -126,7 +144,10 @@ class _AnalysisPageState extends State<AnalysisPage> {
                         ],
                         if (viewModel.status == AnalysisStatus.completed) ...[
                           const SizedBox(height: 24),
-                          _ResultsPanel(viewModel: viewModel),
+                          AnalysisResultsView(
+                            result: viewModel.result!,
+                            targetPlayerLabel: viewModel.targetPlayer.label,
+                          ),
                           if (viewModel.errorMessage != null)
                             Text(
                               viewModel.errorMessage!,
@@ -138,7 +159,7 @@ class _AnalysisPageState extends State<AnalysisPage> {
                           TextButton(
                             key: const Key('clear-analysis-button'),
                             onPressed: viewModel.clearAnalysis,
-                            child: const Text('Clear result and start over'),
+                            child: const Text('Start a new analysis'),
                           ),
                         ],
                         if (viewModel.isClearingResult) ...[
@@ -426,15 +447,17 @@ class _ProgressPanel extends StatelessWidget {
   }
 }
 
-class _ResultsPanel extends StatelessWidget {
-  const _ResultsPanel({required this.viewModel});
+/// Shared by the current session and saved-history details.
+class AnalysisResultsView extends StatelessWidget {
+  const AnalysisResultsView({super.key, required this.result,
+    required this.targetPlayerLabel});
 
-  final AnalysisViewModel viewModel;
+  final AnalysisResult result;
+  final String targetPlayerLabel;
 
   @override
   Widget build(BuildContext context) {
-    final result = viewModel.result!;
-    final player = viewModel.selectedPlayer;
+    final player = result.playerById(result.selectedTrackId);
 
     return Card(
       key: const Key('analysis-results'),
@@ -479,7 +502,7 @@ class _ResultsPanel extends StatelessWidget {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.person_search_outlined),
-                title: Text(viewModel.targetPlayer.label),
+                title: Text(targetPlayerLabel),
                 subtitle: const Text('Selected athlete movement report'),
               ),
               const SizedBox(height: 16),
@@ -515,8 +538,12 @@ class _ResultsPanel extends StatelessWidget {
                   'Prototype threshold: −2 m/s² for at least 0.2 s; not a fatigue score.',
                 ),
               const SizedBox(height: 12),
-              const Text(
-                'Overall effort / fatigue: awaiting client-defined calculation and validation.',
+              ListTile(
+                title: const Text('Overall effort (experimental movement load)'),
+                subtitle: Text(player.overallEffort.method == 'metric_motion_load_v1' &&
+                        player.overallEffort.value != null
+                    ? '${player.overallEffort.value!.toStringAsFixed(1)} AU · ${player.overallEffort.note ?? ""}'
+                    : 'Unavailable. A newly analysed clip with continuous, calibrated movement is required.'),
               ),
               const SizedBox(height: 12),
               ForceVelocityChart(analysis: player.forceVelocity),
