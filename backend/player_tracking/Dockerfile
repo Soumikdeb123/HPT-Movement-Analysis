@@ -15,8 +15,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 COPY hpt_tracking ./hpt_tracking
-COPY yolov8x.pt ./yolov8x.pt
-
+RUN python -c "from ultralytics import YOLO; YOLO('yolov8x.pt')"
 RUN mkdir -p /app/runtime
 
 ENV HPT_RUNTIME_DIR=/app/runtime
