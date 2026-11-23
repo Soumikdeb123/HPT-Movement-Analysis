@@ -352,6 +352,15 @@ class YuchenPrototypeTrackingEngine:
                 if not has_frame:
                     break
 
+                # Run YOLO every second frame on CPU cloud deployments.
+                # Keep the original frame_number so timestamps remain correct.
+                inference_stride = 2
+                if frame_number % inference_stride != 0:
+                    frame_number += 1
+                    if total_frames > 0:
+                        progress_callback(min(frame_number / total_frames * .8, .8))
+                    continue
+
                 detections: List[Detection] = []
                 inference_results = model.predict(
                     frame,
@@ -399,7 +408,7 @@ class YuchenPrototypeTrackingEngine:
 
         minimum_report_frames = max(
             self.minimum_track_frames,
-            min(int(fps * 2), max(5, int(frame_number * 0.02))),
+            min(int(fps * 2 / inference_stride), max(5, int(frame_number * 0.02 / inference_stride))),
         )
         primary_tracks = select_primary_tracks(
             list(tracker.tracks.values()),
