@@ -359,7 +359,7 @@ class YuchenPrototypeTrackingEngine:
                     device=self._device_argument,
                     classes=[0],
                     conf=self.confidence_threshold,
-                    imgsz=min(640, ((max(width, height)+31)//32)*32),
+                    imgsz=320,
                 )
                 for result in inference_results:
                     if result.boxes is None:
