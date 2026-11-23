@@ -5,13 +5,23 @@ No second smoothing, acceleration clipping or speed integration is applied here.
 from math import isfinite
 import numpy as np
 from .yuchen_player_tracker import PlayerTracker, PlayerDetection
-from .metric_motion import metrics_from_series, valid_mass
+from .metric_motion import (
+    FORCE_VELOCITY_ALGORITHM_VERSION, FORCE_VELOCITY_METHOD,
+    acceleration_events, force_velocity_profile, metrics_from_series, valid_mass,
+)
 from .metric_effort import metric_effort
 
 
-def analyse_metric_motion(samples, fps, athlete_mass_kg, confidence):
-    force = {'status': 'unavailable', 'samples': [], 'massKg': athlete_mass_kg,
-             'velocityUnit': 'm/s', 'forceUnit': 'N',
+def analyse_metric_motion(samples, fps, athlete_mass_kg, confidence, tracking_coverage=1.0):
+    force = {'status': 'unavailable', 'samples': [], 'events': [], 'speedBins': [],
+             'currentCurve': [], 'baselineCurve': [], 'fit': None,
+             'baselineAnalysisCount': 0, 'comparisonSummary': None,
+             'recommendedEventIds': [],
+             'quality': {'status': 'unavailable', 'reasons': []},
+             'method': FORCE_VELOCITY_METHOD,
+             'algorithmVersion': FORCE_VELOCITY_ALGORITHM_VERSION,
+             'massKg': athlete_mass_kg,
+             'velocityUnit': 'm/s', 'forceUnit': 'N/kg',
              'note': 'Valid court calibration and continuous metric positions are required.'}
     result = {'metrics': None, 'forceVelocity': force}
     if not isfinite(fps) or fps <= 0 or not isfinite(confidence) or confidence < .7 or not samples:
@@ -100,15 +110,32 @@ def analyse_metric_motion(samples, fps, athlete_mass_kg, confidence):
     for key in ('acceleration', 'deceleration'):
         metrics[key]['note'] = note
     result['metrics'] = metrics
-    force['note'] = 'Enter body mass (20–250 kg) to estimate tangential net force.'
-    if valid_mass(athlete_mass_kg):
-        fs = [dict(frame=p['frame'], segmentId=p['segmentId'], timeSeconds=p['timeSeconds'],
-                   velocityMps=p['speed'], tangentialAccelerationMps2=p['acceleration'],
-                   estimatedNetForceN=athlete_mass_kg*p['acceleration'],
-                   phase='propulsive' if p['acceleration'] > .25 else 'braking' if p['acceleration'] < -.25 else 'steady') for p in series]
-        force.update(status='experimental', samples=fs,
-                     maximumVelocityMps=max(p['velocityMps'] for p in fs),
-                     peakPropulsiveForceN=max(0., max(p['estimatedNetForceN'] for p in fs)),
-                     peakBrakingForceN=max(0., -min(p['estimatedNetForceN'] for p in fs)),
-                     note='Entered mass × filtered tangential acceleration. Not measured ground-reaction force or fatigue.')
+    fs = [dict(frame=p['frame'], segmentId=p['segmentId'], timeSeconds=p['timeSeconds'],
+               velocityMps=p['speed'], tangentialAccelerationMps2=p['acceleration'],
+               estimatedForceNPerKg=p['acceleration'],
+               estimatedNetForceN=athlete_mass_kg*p['acceleration'] if valid_mass(athlete_mass_kg) else None,
+               phase='propulsive' if p['acceleration'] > .25 else 'braking' if p['acceleration'] < -.25 else 'steady') for p in series]
+    fv_events = acceleration_events(series, fps, athlete_mass_kg)
+    quality, fit, current_curve = force_velocity_profile(
+        fv_events, tracking_coverage, confidence
+    )
+    public_events = [{key: value for key, value in event.items() if key != '_samples'}
+                     for event in fv_events]
+    absolute = [p['estimatedNetForceN'] for p in fs if p['estimatedNetForceN'] is not None]
+    force.update(status='experimental',
+                 samples=fs, events=public_events, speedBins=[], quality=quality,
+                 fit=fit, currentCurve=current_curve, baselineCurve=[],
+                 baselineAnalysisCount=0,
+                 comparisonSummary=(
+                     f'This match identified {len(public_events)} valid sprint accelerations. '
+                     'Complete at least three comparable analyses to establish a personal baseline.'
+                     if current_curve else None
+                 ),
+                 recommendedEventIds=[],
+                 maximumVelocityMps=max(p['velocityMps'] for p in fs),
+                 peakPropulsiveForceN=max(0., max(absolute)) if absolute else None,
+                 peakBrakingForceN=max(0., -min(absolute)) if absolute else None,
+                 note=('Observed match acceleration profile derived from court-mapped video. '
+                       'N/kg is estimated horizontal net force per kilogram, not measured '
+                       'ground-reaction force, fatigue or a training prescription.'))
     return result

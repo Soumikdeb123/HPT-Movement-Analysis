@@ -13,6 +13,20 @@ MAX_GAP_SECONDS = 0.20
 MAX_SPEED = 12.0
 MAX_ACCELERATION = 15.0
 WINDOW_SECONDS = 0.70
+SPRINT_WINDOW_SECONDS = 0.35
+MIN_ACCELERATION_EVENT_SECONDS = 0.25
+MIN_ACCELERATION_EVENT_DELTA_SPEED = 0.40
+MIN_ACCELERATION_MPS2 = 0.50
+MIN_EVENT_SPEED_MPS = 0.30
+MAX_EVENT_HEADING_CHANGE_DEGREES = 30.0
+FORCE_VELOCITY_METHOD = "estimated_match_fv_v3"
+FORCE_VELOCITY_ALGORITHM_VERSION = "3.0.0"
+MIN_PROFILE_EVENTS = 1
+MIN_PROFILE_SAMPLES = 8
+MIN_PROFILE_SPEED_RANGE_MPS = 0.35
+GOOD_PROFILE_EVENTS = 4
+GOOD_PROFILE_SPEED_RANGE_MPS = 0.80
+CURVE_POINT_COUNT = 24
 
 
 def valid_mass(mass):
@@ -69,13 +83,13 @@ def continuous_segments(samples, fps):
     return segments
 
 
-def screened_series(samples, fps):
+def screened_series(samples, fps, window_seconds=WINDOW_SECONDS):
     """Interpolate short gaps, filter positions, derive speed then signed dv/dt.
 
     Two half-windows are trimmed because acceleration uses a second filter.
     Rejected points split the outputs; there is NO per-frame distance deadband.
     """
-    window = max(5, int(round(WINDOW_SECONDS*fps)) | 1)
+    window = max(5, int(round(window_seconds*fps)) | 1)
     edge = 2*(window//2)
     result, excluded, sid = [], 0, 0
     for segment in continuous_segments(samples, fps):
@@ -135,6 +149,184 @@ def deceleration_events(series, fps):
     return events
 
 
+def _finish_acceleration_event(run, fps, athlete_mass_kg):
+    """Convert one continuous positive-acceleration run into a reviewable event."""
+    if len(run) < 2:
+        return None
+    duration = (run[-1]["frame"] - run[0]["frame"]) / fps
+    delta_speed = run[-1]["speed"] - run[0]["speed"]
+    if duration + 1e-9 < MIN_ACCELERATION_EVENT_SECONDS:
+        return None
+    if delta_speed + 1e-9 < MIN_ACCELERATION_EVENT_DELTA_SPEED:
+        return None
+    peak = max(run, key=lambda point: point["acceleration"])
+    mean_acceleration = sum(point["acceleration"] for point in run) / len(run)
+    event_id = f"fv-{run[0]['frame']}-{run[-1]['frame']}"
+    return {
+        "eventId": event_id,
+        "startFrame": run[0]["frame"],
+        "peakFrame": peak["frame"],
+        "endFrame": run[-1]["frame"],
+        "startTimeSeconds": round(run[0]["timeSeconds"], 4),
+        "peakTimeSeconds": round(peak["timeSeconds"], 4),
+        "endTimeSeconds": round(run[-1]["timeSeconds"], 4),
+        "videoSeekStartSeconds": round(max(0.0, run[0]["timeSeconds"] - 1.5), 4),
+        "videoSeekEndSeconds": round(run[-1]["timeSeconds"] + 1.5, 4),
+        "durationSeconds": round(duration, 3),
+        "startSpeedMps": round(run[0]["speed"], 3),
+        "peakSpeedMps": round(max(point["speed"] for point in run), 3),
+        "deltaSpeedMps": round(delta_speed, 3),
+        "meanAccelerationMps2": round(mean_acceleration, 3),
+        "peakAccelerationMps2": round(peak["acceleration"], 3),
+        "meanForceNPerKg": round(mean_acceleration, 3),
+        "estimatedMeanForceN": (
+            round(mean_acceleration * athlete_mass_kg, 2)
+            if valid_mass(athlete_mass_kg) else None
+        ),
+        "startX": round(run[0]["x"], 3),
+        "startY": round(run[0]["y"], 3),
+        "endX": round(run[-1]["x"], 3),
+        "endY": round(run[-1]["y"], 3),
+        "quality": "accepted",
+        # Kept internally until the event-balanced match relationship is fitted.
+        "_samples": run,
+    }
+
+
+def acceleration_events(series, fps, athlete_mass_kg=None):
+    """Extract sustained, directionally stable acceleration evidence.
+
+    This intentionally reports observed match events.  It does not infer a
+    maximal sprint capacity and does not mix braking samples into the profile.
+    """
+    events, current = [], []
+
+    def flush():
+        nonlocal current
+        event = _finish_acceleration_event(current, fps, athlete_mass_kg)
+        if event is not None:
+            events.append(event)
+        current = []
+
+    for point in series:
+        eligible = (
+            point["acceleration"] >= MIN_ACCELERATION_MPS2
+            and point["speed"] >= MIN_EVENT_SPEED_MPS
+        )
+        if not eligible:
+            flush()
+            continue
+        if current:
+            previous = current[-1]
+            adjacent = (
+                point["segmentId"] == previous["segmentId"]
+                and point["frame"] == previous["frame"] + 1
+            )
+            heading_change = _angle_between(
+                (current[0]["vx"], current[0]["vy"]),
+                (point["vx"], point["vy"]),
+            )
+            if not adjacent or heading_change > MAX_EVENT_HEADING_CHANGE_DEGREES:
+                flush()
+        current.append(point)
+    flush()
+    return events
+
+
+def force_velocity_profile(events, tracking_coverage, calibration_confidence):
+    """Fit one event-balanced match sprint Force–Velocity relationship."""
+    reasons = []
+    if calibration_confidence < .70:
+        reasons.append("Court calibration confidence was too low for a reliable sprint profile.")
+    if len(events) < MIN_PROFILE_EVENTS:
+        reasons.append("No valid directionally stable sprint acceleration was identified.")
+
+    # Each event contributes a total weight of one, regardless of its length.
+    x_values, y_values, weights = [], [], []
+    for event in events:
+        samples = event.get("_samples") or []
+        if not samples:
+            continue
+        event_weight = 1.0 / len(samples)
+        for point in samples:
+            x_values.append(float(point["speed"]))
+            y_values.append(float(point["acceleration"]))
+            weights.append(event_weight)
+
+    fit, curve = None, []
+    if x_values:
+        x = np.asarray(x_values, dtype=float)
+        y = np.asarray(y_values, dtype=float)
+        w = np.asarray(weights, dtype=float)
+        speed_min, speed_max = float(np.min(x)), float(np.max(x))
+        speed_range = speed_max-speed_min
+        if len(x) < MIN_PROFILE_SAMPLES:
+            reasons.append("The valid sprint evidence was too short for a stable profile.")
+        elif speed_range + 1e-9 < MIN_PROFILE_SPEED_RANGE_MPS:
+            reasons.append("Valid sprint accelerations did not cover enough movement speed.")
+        else:
+            keep = np.ones(len(x), dtype=bool)
+            slope = intercept = 0.0
+            # Two-pass robust fit removes isolated tracking derivatives without
+            # forcing the expected negative slope.
+            for _ in range(2):
+                slope, intercept = np.polyfit(
+                    x[keep], y[keep], 1, w=np.sqrt(w[keep])
+                )
+                residual = y-(intercept+slope*x)
+                centre = float(np.median(residual[keep]))
+                mad = float(np.median(np.abs(residual[keep]-centre)))
+                if mad <= 1e-9:
+                    break
+                candidate = np.abs(residual-centre) <= 3.5*1.4826*mad
+                if int(candidate.sum()) < max(8, int(.6*len(x))):
+                    break
+                keep = candidate
+            prediction = intercept+slope*x[keep]
+            mean = float(np.average(y[keep], weights=w[keep]))
+            ss_res = float(np.sum(w[keep]*(y[keep]-prediction)**2))
+            ss_tot = float(np.sum(w[keep]*(y[keep]-mean)**2))
+            r_squared = 1.0-ss_res/ss_tot if ss_tot > 1e-12 else 0.0
+            if slope >= -0.02:
+                reasons.append(
+                    "The valid sprint evidence did not form a stable descending Force–Velocity relationship."
+                )
+            else:
+                fit = {
+                    "interceptNPerKg": round(float(intercept), 6),
+                    "slopeNPerKgPerMps": round(float(slope), 6),
+                    "minVelocityMps": round(speed_min, 4),
+                    "maxVelocityMps": round(speed_max, 4),
+                    "rSquared": round(r_squared, 4),
+                    "eventCount": len(events),
+                }
+                for velocity in np.linspace(speed_min, speed_max, CURVE_POINT_COUNT):
+                    curve.append({
+                        "velocityMps": round(float(velocity), 4),
+                        "forceNPerKg": round(
+                            max(0.0, float(intercept+slope*velocity)), 4
+                        ),
+                    })
+
+    speed_range = (
+        float(fit["maxVelocityMps"]) - float(fit["minVelocityMps"])
+        if fit is not None else 0.0
+    )
+    unavailable = calibration_confidence < .70 or fit is None
+    quality = "unavailable" if unavailable else (
+        "good" if tracking_coverage >= .70
+        and len(events) >= GOOD_PROFILE_EVENTS
+        and speed_range >= GOOD_PROFILE_SPEED_RANGE_MPS else "limited"
+    )
+    return {
+        "status": quality,
+        "trackingCoverage": round(tracking_coverage, 3),
+        "calibrationConfidence": round(calibration_confidence, 3),
+        "validEventCount": len(events),
+        "reasons": reasons if unavailable else [],
+    }, fit, curve
+
+
 def metrics_from_series(series, fps, events, excluded):
     """Time-integrate velocity ONLY over adjacent retained frames, not gaps."""
     distance = lateral = longitudinal = duration = 0.0
@@ -183,13 +375,20 @@ def metrics_from_series(series, fps, events, excluded):
                          "excludedSamples": excluded, "note": note}}
 
 
-def analyse_metric_motion(samples, fps, athlete_mass_kg, calibration_confidence):
+def analyse_metric_motion(samples, fps, athlete_mass_kg, calibration_confidence,
+                          tracking_coverage=1.0):
     """Return the shared metrics plus optional mass-dependent force estimates."""
     ordered = list(samples)
     assessment = assess(ordered, fps, calibration_confidence)
-    force = {"status": "unavailable", "method": "mass_times_video_derived_tangential_acceleration",
+    force = {"status": "unavailable", "method": FORCE_VELOCITY_METHOD,
+             "algorithmVersion": FORCE_VELOCITY_ALGORITHM_VERSION,
              "massKg": round(athlete_mass_kg, 2) if valid_mass(athlete_mass_kg) else None,
-             "velocityUnit": "m/s", "forceUnit": "N", "samples": [], "maximumVelocityMps": None,
+             "velocityUnit": "m/s", "forceUnit": "N/kg", "samples": [], "events": [],
+             "speedBins": [], "currentCurve": [], "baselineCurve": [], "fit": None,
+             "baselineAnalysisCount": 0, "comparisonSummary": None,
+             "recommendedEventIds": [],
+             "quality": {"status": "unavailable", "reasons": assessment["reasons"]},
+             "maximumVelocityMps": None,
              "peakPropulsiveForceN": None, "peakBrakingForceN": None, "decelerationEfforts": [],
              "excludedSamples": 0, "metricValidation": assessment,
              "note": "Metric trajectory validation failed: " + " ".join(assessment["reasons"])}
@@ -197,24 +396,49 @@ def analyse_metric_motion(samples, fps, athlete_mass_kg, calibration_confidence)
     if assessment["status"] != "accepted":
         return result
     series, excluded = screened_series(ordered, fps)
-    force["excludedSamples"] = excluded
-    if len(series) < 5:
-        force["note"] = "No continuous metric segment remained after centred smoothing (typically >1.5 seconds required)."
-        return result
-    events = deceleration_events(series, fps)
-    result["metrics"] = metrics_from_series(series, fps, events, excluded)
-    force["decelerationEfforts"] = events
-    if not valid_mass(athlete_mass_kg):
-        force["note"] = "Body mass is optional. Enter 20–250 kg for estimated force; movement metrics remain available."
+    profile_series, profile_excluded = screened_series(
+        ordered, fps, SPRINT_WINDOW_SECONDS
+    )
+    force["excludedSamples"] = profile_excluded
+    if len(series) >= 5:
+        events = deceleration_events(series, fps)
+        result["metrics"] = metrics_from_series(series, fps, events, excluded)
+        force["decelerationEfforts"] = events
+    if len(profile_series) < 5:
+        force["note"] = "No continuous sprint segment remained after quality screening."
         return result
     force_samples = [{"frame": p["frame"], "segmentId": p["segmentId"], "timeSeconds": round(p["timeSeconds"], 4),
                       "velocityMps": round(p["speed"], 3), "tangentialAccelerationMps2": round(p["acceleration"], 3),
-                      "estimatedNetForceN": round(athlete_mass_kg*p["acceleration"], 2),
+                      "estimatedForceNPerKg": round(p["acceleration"], 3),
+                      "estimatedNetForceN": round(athlete_mass_kg*p["acceleration"], 2)
+                      if valid_mass(athlete_mass_kg) else None,
                       "phase": "propulsive" if p["acceleration"] > .25 else "braking" if p["acceleration"] < -.25 else "steady"}
-                     for p in series]
-    force.update(status="experimental", samples=force_samples,
+                     for p in (series or profile_series)]
+    fv_events = acceleration_events(profile_series, fps, athlete_mass_kg)
+    quality, fit, current_curve = force_velocity_profile(
+        fv_events, max(0.0, min(1.0, float(tracking_coverage))), calibration_confidence
+    )
+    public_events = [{key: value for key, value in event.items() if key != "_samples"}
+                     for event in fv_events]
+    absolute_forces = [p["estimatedNetForceN"] for p in force_samples
+                       if p["estimatedNetForceN"] is not None]
+    # Keep the raw metric force samples available to the existing result modules.
+    # The dedicated match profile is independently withheld when currentCurve is empty.
+    force.update(status="experimental",
+                 samples=force_samples, events=public_events, speedBins=[], quality=quality,
+                 fit=fit, currentCurve=current_curve, baselineCurve=[],
+                 baselineAnalysisCount=0,
+                 comparisonSummary=(
+                     f"This match identified {len(public_events)} valid sprint accelerations. "
+                     "Complete at least three comparable analyses to establish a personal baseline."
+                     if current_curve else None
+                 ),
+                 recommendedEventIds=[],
                  maximumVelocityMps=max(p["velocityMps"] for p in force_samples),
-                 peakPropulsiveForceN=max(0.0, max(p["estimatedNetForceN"] for p in force_samples)),
-                 peakBrakingForceN=max(0.0, -min(p["estimatedNetForceN"] for p in force_samples)),
-                 note="Estimated tangential net force = mass × rate of change of speed. Not ground-reaction force, a validated force–velocity profile, overall effort or a fatigue score.")
+                 peakPropulsiveForceN=max(0.0, max(absolute_forces)) if absolute_forces else None,
+                 peakBrakingForceN=max(0.0, -min(absolute_forces)) if absolute_forces else None,
+                 note=("Observed match acceleration profile derived from court-mapped video. "
+                       "N/kg is estimated horizontal net force per kilogram; entered mass only adds "
+                       "an absolute-N estimate. This is not measured ground-reaction force, a maximal "
+                       "sprint test, fatigue or a training prescription."))
     return result

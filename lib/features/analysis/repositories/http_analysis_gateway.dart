@@ -51,6 +51,7 @@ class HttpAnalysisGateway implements AnalysisGateway {
     final createRequest =
         http.MultipartRequest('POST', baseUri.resolve('/api/analyses'))
           ..headers.addAll(_headers)
+          ..fields['player_id'] = request.playerId
           ..fields['target_player'] = request.targetPlayer.apiValue
           ..files.add(
             await http.MultipartFile.fromPath(
@@ -62,6 +63,11 @@ class HttpAnalysisGateway implements AnalysisGateway {
 
     if (request.athleteMassKg case final double mass) {
       createRequest.fields['athlete_mass_kg'] = mass.toString();
+    }
+    if (request.courtCorners case final corners?) {
+      createRequest.fields['court_corners'] = jsonEncode(
+        corners.map((point) => point.toJson()).toList(),
+      );
     }
     http.StreamedResponse createResponse;
     try {
@@ -214,26 +220,42 @@ class HttpAnalysisGateway implements AnalysisGateway {
 }
 
 /// Resolve saved relative file URLs against the current server address.
-AnalysisResult analysisResultFromSnapshot(Map<String, dynamic> snapshot, Uri baseUri) {
+AnalysisResult analysisResultFromSnapshot(
+  Map<String, dynamic> snapshot,
+  Uri baseUri,
+) {
   final rawResult = snapshot['result'];
   if (snapshot['status'] != 'completed' || rawResult is! Map) {
     throw const AnalysisGatewayException('The saved analysis is not complete.');
   }
   final result = Map<String, dynamic>.from(rawResult);
+  result['playerId'] ??= snapshot['playerId'];
+  result['playerName'] ??= snapshot['playerName'];
   if (result['annotatedVideoUrl'] case final String url) {
     result['annotatedVideoUrl'] = baseUri.resolve(url).toString();
   }
   if (result['reportImages'] case final List images) {
-    result['reportImages'] = images.whereType<Map>().map((item) => {
-      ...Map<String, dynamic>.from(item),
-      'url': baseUri.resolve(item['url'] as String).toString(),
-    }).toList();
+    result['reportImages'] = images
+        .whereType<Map>()
+        .map(
+          (item) => {
+            ...Map<String, dynamic>.from(item),
+            'url': baseUri.resolve(item['url'] as String).toString(),
+          },
+        )
+        .toList();
   }
   if (result['reportArchiveUrl'] case final String url) {
     result['reportArchiveUrl'] = baseUri.resolve(url).toString();
   }
-  return AnalysisResult.fromJson(result,
+  if (result['coachReportUrl'] case final String url) {
+    result['coachReportUrl'] = baseUri.resolve(url).toString();
+  }
+  return AnalysisResult.fromJson(
+    result,
     analysisId: snapshot['analysisId'] as String,
     inputVideoJson: snapshot['inputVideo'] is Map
-        ? Map<String, dynamic>.from(snapshot['inputVideo'] as Map) : null);
+        ? Map<String, dynamic>.from(snapshot['inputVideo'] as Map)
+        : null,
+  );
 }

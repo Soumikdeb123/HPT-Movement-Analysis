@@ -22,7 +22,8 @@ def test_filter_trims_one_half_window_as_upstream():
     samples = result['metrics']['speed']['samples']
     assert samples[0]['timeSeconds'] == pytest.approx(10/30, abs=1e-4)
     assert len(samples) == 130
-    assert result['forceVelocity']['status'] == 'unavailable'
+    assert result['forceVelocity']['status'] == 'experimental'
+    assert result['forceVelocity']['forceUnit'] == 'N/kg'
 
 
 def test_does_not_switch_to_opposite_half_when_target_missing():

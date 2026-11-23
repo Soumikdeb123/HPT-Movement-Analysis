@@ -75,7 +75,7 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                     ),
                     const SizedBox(height: 12),
                     const Text(
-                      'This prototype is designed to analyse player movement '
+                      'This application is designed to analyse player movement '
                       'and workload. It does not analyse ball landing '
                       'positions.',
                       textAlign: TextAlign.center,

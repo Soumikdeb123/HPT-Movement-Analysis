@@ -9,7 +9,7 @@ from urllib.request import Request as UrlRequest, urlopen
 from urllib.error import HTTPError, URLError
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, Query, status
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -121,14 +121,64 @@ def create_app(
             response["inferenceDevice"] = device_label
         return response
 
+    @app.get("/api/players")
+    async def list_players(user: str = Depends(authenticated_user)) -> dict:
+        return manager.history.list_players(user)
+
+    @app.post("/api/players", status_code=status.HTTP_201_CREATED)
+    async def create_player(
+        payload: dict = Body(...), user: str = Depends(authenticated_user)
+    ) -> dict:
+        try:
+            return manager.history.create_player(
+                user, payload.get("displayName", ""), payload.get("defaultMassKg")
+            )
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.patch("/api/players/{player_id}")
+    async def update_player(
+        player_id: str, payload: dict = Body(...),
+        user: str = Depends(authenticated_user),
+    ) -> dict:
+        mass = payload["defaultMassKg"] if "defaultMassKg" in payload else "unchanged"
+        try:
+            player = manager.history.update_player(
+                user, player_id, payload.get("displayName"), mass
+            )
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if player is None:
+            raise HTTPException(status_code=404, detail="Player was not found.")
+        return player
+
+    @app.delete("/api/players/{player_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def archive_player(
+        player_id: str, user: str = Depends(authenticated_user)
+    ) -> None:
+        if manager.history.update_player(user, player_id, archive=True) is None:
+            raise HTTPException(status_code=404, detail="Player was not found.")
+
     @app.post("/api/analyses", status_code=status.HTTP_202_ACCEPTED)
     async def create_analysis(
         request: Request,
         video: UploadFile = File(...),
+        player_id: Optional[str] = Form(None),
         target_player: str = Form("near"),
         athlete_mass_kg: Optional[float] = Form(None),
+        court_corners: Optional[str] = Form(None),
         user: str = Depends(authenticated_user),
     ) -> dict:
+        if player_id is None:
+            existing = manager.history.list_players(user)["items"]
+            player = existing[0] if existing else manager.history.create_player(user, "Default Player")
+        else:
+            player = manager.history.get_player(user, player_id) if player_id else None
+        if player is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Choose an active player before starting the analysis.",
+            )
         if target_player not in {"near", "far"}:
             raise HTTPException(
                 status_code=422,
@@ -142,6 +192,39 @@ def create_app(
                     f"{MAXIMUM_MASS_KG:.0f} kg."
                 ),
             )
+        parsed_court_corners = None
+        if court_corners is not None:
+            try:
+                parsed_court_corners = json.loads(court_corners)
+                valid_shape = (
+                    isinstance(parsed_court_corners, list)
+                    and len(parsed_court_corners) == 4
+                    and all(
+                        isinstance(point, list)
+                        and len(point) == 2
+                        and all(
+                            isinstance(value, (int, float))
+                            and not isinstance(value, bool)
+                            and 0.0 <= float(value) <= 1.0
+                            for value in point
+                        )
+                        for point in parsed_court_corners
+                    )
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                valid_shape = False
+            if not valid_shape:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Manual court calibration must contain four in-frame "
+                        "points in far-left, far-right, near-right, near-left order."
+                    ),
+                )
+            parsed_court_corners = [
+                [float(value) for value in point]
+                for point in parsed_court_corners
+            ]
         original_filename = Path(video.filename or "").name
         suffix = Path(original_filename).suffix.lower()
         if suffix not in ALLOWED_VIDEO_SUFFIXES:
@@ -197,8 +280,11 @@ def create_app(
         job = request.app.state.job_manager.create_job(
             input_path=input_path,
             original_filename=original_filename or f"video{suffix}",
+            player_id=player["playerId"],
+            player_name=player["displayName"],
             target_player=target_player,
             athlete_mass_kg=athlete_mass_kg,
+            court_corners=parsed_court_corners,
             input_video=input_video.to_dict(),
             owner=user,
         )
@@ -209,8 +295,11 @@ def create_app(
         user: str = Depends(authenticated_user),
         limit: int = Query(20, ge=1, le=100),
         offset: int = Query(0, ge=0),
+        player_id: Optional[str] = Query(None),
     ) -> dict:
-        return manager.history.list(user, limit, offset)
+        if player_id and manager.history.get_player(user, player_id, include_archived=True) is None:
+            raise HTTPException(status_code=404, detail="Player was not found.")
+        return manager.history.list(user, limit, offset, player_id=player_id)
 
     @app.get("/api/analyses/{job_id}")
     async def get_analysis(request: Request, job_id: str, user: str = Depends(authenticated_user)) -> dict:

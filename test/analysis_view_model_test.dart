@@ -6,6 +6,7 @@ import 'package:hpt_player_analysis/features/analysis/models/analysis_result.dar
 import 'package:hpt_player_analysis/features/analysis/repositories/analysis_gateway.dart';
 import 'package:hpt_player_analysis/features/analysis/services/analysis_video_picker.dart';
 import 'package:hpt_player_analysis/features/analysis/view_models/analysis_view_model.dart';
+import 'package:hpt_player_analysis/features/players/models/player_profile.dart';
 
 void main() {
   test('blank mass allows analysis; malformed mass gives a visible validation error', () async {
@@ -13,6 +14,7 @@ void main() {
       _ImmediateGateway(expectedMass: null),
       const _FakeVideoPicker(),
     );
+    vm.selectPlayer(_testPlayer);
     await vm.selectVideo();
     expect(vm.canStart, isTrue);
     vm.updateAthleteMass('invalid');
@@ -31,6 +33,7 @@ void main() {
 
     expect(viewModel.canStart, isFalse);
 
+    viewModel.selectPlayer(_testPlayer);
     await viewModel.selectVideo();
     expect(viewModel.canStart, isTrue); // Body mass is optional.
     expect(viewModel.selectedVideo?.name, 'client-video.mp4');
@@ -66,6 +69,7 @@ void main() {
   test('running analysis can be cancelled and reset to idle', () async {
     final gateway = _CancellableGateway();
     final viewModel = AnalysisViewModel(gateway, const _FakeVideoPicker());
+    viewModel.selectPlayer(_testPlayer);
     await viewModel.selectVideo();
     viewModel.updateAthleteMass('75');
 
@@ -114,6 +118,8 @@ class _ImmediateGateway implements AnalysisGateway {
   }) async {
     expect(request.videoName, 'client-video.mp4');
     expect(request.athleteMassKg, expectedMass);
+    expect(request.playerId, _testPlayer.id);
+    expect(request.playerName, _testPlayer.name);
     onProgress(0.5);
     onProgress(1);
     return _testResult;
@@ -159,6 +165,8 @@ class _CancellableGateway implements AnalysisGateway {
   @override
   Future<void> deleteAnalysis(String analysisId) async {}
 }
+
+const _testPlayer = PlayerProfile(id: 'player-1', name: 'Test Player');
 
 final _testResult = AnalysisResult.fromJson(const {
   'calibrationStatus': 'uncalibrated',

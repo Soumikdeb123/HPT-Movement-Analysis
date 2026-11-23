@@ -5,6 +5,9 @@ import 'package:video_player/video_player.dart';
 
 import '../../auth/repositories/auth_repository.dart';
 import '../../history/views/analysis_history_page.dart';
+import '../../players/models/player_profile.dart';
+import '../../players/repositories/player_repository.dart';
+import '../../players/views/player_selector_card.dart';
 import '../services/analysis_export_service.dart';
 import '../models/analysis_request.dart';
 import '../models/analysis_result.dart';
@@ -14,6 +17,7 @@ import '../services/analysis_video_picker.dart';
 import '../view_models/analysis_view_model.dart';
 import 'force_velocity_chart.dart';
 import 'acceleration_chart.dart';
+import 'sprint_events_page.dart';
 
 class AnalysisPage extends StatefulWidget {
   const AnalysisPage({
@@ -21,12 +25,14 @@ class AnalysisPage extends StatefulWidget {
     this.gateway,
     this.videoPicker,
     this.onSignOut,
+    this.playerRepository,
   });
 
   final VoidCallback? onSignOut;
 
   final AnalysisGateway? gateway;
   final AnalysisVideoPicker? videoPicker;
+  final PlayerRepository? playerRepository;
 
   @override
   State<AnalysisPage> createState() => _AnalysisPageState();
@@ -43,6 +49,12 @@ class _AnalysisPageState extends State<AnalysisPage> {
   late final AnalysisGateway _gateway;
   late final bool _ownsGateway;
   late final AnalysisViewModel viewModel;
+  late final PlayerRepository _playerRepository;
+  late final bool _ownsPlayerRepository;
+  List<PlayerProfile> _players = const [];
+  bool _playersLoading = true;
+  String? _playersError;
+  final _massController = TextEditingController();
 
   @override
   void initState() {
@@ -53,15 +65,129 @@ class _AnalysisPageState extends State<AnalysisPage> {
       _gateway,
       widget.videoPicker ?? const FilePickerAnalysisVideoPicker(),
     );
+    _ownsPlayerRepository = widget.playerRepository == null;
+    _playerRepository = widget.playerRepository ?? PlayerRepository();
+    if (widget.gateway != null && widget.playerRepository == null) {
+      _players = const [PlayerProfile(id: 'test-player', name: 'Test Player')];
+      _playersLoading = false;
+      _selectPlayer(_players.first);
+    } else {
+      _loadPlayers();
+      _recoverLostGalleryVideo();
+    }
   }
 
   @override
   void dispose() {
     viewModel.dispose();
+    _massController.dispose();
+    if (_ownsPlayerRepository) _playerRepository.close();
     if (_ownsGateway && _gateway is HttpAnalysisGateway) {
       _gateway.close();
     }
     super.dispose();
+  }
+
+  Future<void> _loadPlayers() async {
+    setState(() {
+      _playersLoading = true;
+      _playersError = null;
+    });
+    try {
+      final players = await _playerRepository.list();
+      if (!mounted) return;
+      setState(() {
+        _players = players;
+        _playersLoading = false;
+      });
+      if (players.isNotEmpty && viewModel.player == null) {
+        _selectPlayer(players.first);
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _playersLoading = false;
+        _playersError = error.toString();
+      });
+    }
+  }
+
+  Future<void> _addPlayer() async {
+    final input = await showCreatePlayerDialog(context);
+    if (input == null || !mounted) return;
+    try {
+      final player = await _playerRepository.create(
+        input.key,
+        defaultMassKg: input.value,
+      );
+      if (!mounted) return;
+      setState(() => _players = [..._players, player]);
+      _selectPlayer(player);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  void _selectPlayer(PlayerProfile player) {
+    viewModel.selectPlayer(player);
+    final mass = player.defaultMassKg;
+    _massController.text = mass == null ? '' : mass.toStringAsFixed(1);
+    viewModel.updateAthleteMass(_massController.text);
+  }
+
+  Future<void> _recoverLostGalleryVideo() async {
+    try {
+      final video = await GalleryAnalysisVideoPicker.retrieveLostVideo();
+      if (video != null && mounted) viewModel.restoreSelectedVideo(video);
+    } on Object {
+      // The standard chooser remains available when Android has no lost item.
+    }
+  }
+
+  Future<void> _chooseVideo() async {
+    final source = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Choose video',
+                style: Theme.of(sheetContext).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Choose from Photos'),
+                subtitle: const Text(
+                  'Recommended for videos saved on this device',
+                ),
+                onTap: () => Navigator.pop(sheetContext, 'gallery'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder_open_outlined),
+                title: const Text('Choose from Files'),
+                subtitle: const Text(
+                  'Browse local and connected file locations',
+                ),
+                onTap: () => Navigator.pop(sheetContext, 'files'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (source == 'gallery') {
+      await viewModel.selectVideo(picker: const GalleryAnalysisVideoPicker());
+    } else if (source == 'files') {
+      await viewModel.selectVideo();
+    }
   }
 
   @override
@@ -76,7 +202,8 @@ class _AnalysisPageState extends State<AnalysisPage> {
               IconButton(
                 tooltip: 'Analysis History',
                 onPressed: viewModel.isProcessing || viewModel.isSelectingVideo
-                    ? null : _openHistory,
+                    ? null
+                    : _openHistory,
                 icon: const Icon(Icons.history),
               ),
               if (widget.onSignOut != null)
@@ -108,18 +235,34 @@ class _AnalysisPageState extends State<AnalysisPage> {
                         const SizedBox(height: 8),
                         Text(
                           'Select a fixed-camera tennis video and send it to '
-                          'the local player-tracking prototype.',
+                          'the configured movement analysis service.',
                           style: Theme.of(context).textTheme.bodyLarge,
                         ),
                         const SizedBox(height: 24),
-                        _VideoCard(viewModel: viewModel),
+                        PlayerSelectorCard(
+                          players: _players,
+                          selected: viewModel.player,
+                          loading: _playersLoading,
+                          error: _playersError,
+                          onSelect: _selectPlayer,
+                          onAdd: _addPlayer,
+                          onRefresh: _loadPlayers,
+                        ),
+                        const SizedBox(height: 16),
+                        _VideoCard(
+                          viewModel: viewModel,
+                          onChoose: _chooseVideo,
+                        ),
                         if (viewModel.validatedVideoMetadata
                             case final metadata?) ...[
                           const SizedBox(height: 16),
                           _InputVideoMetadataCard(metadata: metadata),
                         ],
                         const SizedBox(height: 16),
-                        _TargetPlayerCard(viewModel: viewModel),
+                        _TargetPlayerCard(
+                          viewModel: viewModel,
+                          massController: _massController,
+                        ),
                         const SizedBox(height: 16),
                         FilledButton.icon(
                           key: const Key('start-analysis-button'),
@@ -187,9 +330,10 @@ class _AnalysisPageState extends State<AnalysisPage> {
 }
 
 class _VideoCard extends StatelessWidget {
-  const _VideoCard({required this.viewModel});
+  const _VideoCard({required this.viewModel, required this.onChoose});
 
   final AnalysisViewModel viewModel;
+  final VoidCallback onChoose;
 
   @override
   Widget build(BuildContext context) {
@@ -201,7 +345,7 @@ class _VideoCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              '1. Select video',
+              '2. Select video',
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
@@ -210,11 +354,13 @@ class _VideoCard extends StatelessWidget {
               'sent only to the local analysis service configured for this app.',
             ),
             const SizedBox(height: 16),
+            const _RecordingGuide(),
+            const SizedBox(height: 16),
             OutlinedButton.icon(
               key: const Key('select-video-button'),
               onPressed: viewModel.isProcessing || viewModel.isSelectingVideo
                   ? null
-                  : viewModel.selectVideo,
+                  : onChoose,
               icon: viewModel.isSelectingVideo
                   ? const SizedBox.square(
                       dimension: 18,
@@ -249,6 +395,97 @@ class _VideoCard extends StatelessWidget {
     if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
     return '$bytes bytes';
   }
+}
+
+class _RecordingGuide extends StatelessWidget {
+  const _RecordingGuide();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.primaryContainer
+          .withValues(alpha: .35),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Row(
+      children: [
+        SizedBox(
+          width: 108,
+          height: 84,
+          child: CustomPaint(
+            painter: _RecordingGuidePainter(
+              lineColor: Theme.of(context).colorScheme.primary,
+              cameraColor: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        const SizedBox(width: 14),
+        const Expanded(
+          child: Text(
+            'For best results, keep the camera fixed behind the baseline with the full court and both players visible.',
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _RecordingGuidePainter extends CustomPainter {
+  const _RecordingGuidePainter({
+    required this.lineColor,
+    required this.cameraColor,
+  });
+
+  final Color lineColor;
+  final Color cameraColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final court = Paint()
+      ..color = lineColor
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+    final camera = Paint()
+      ..color = cameraColor
+      ..style = PaintingStyle.fill;
+    final outline = Path()
+      ..moveTo(size.width * .33, size.height * .18)
+      ..lineTo(size.width * .67, size.height * .18)
+      ..lineTo(size.width * .86, size.height * .72)
+      ..lineTo(size.width * .14, size.height * .72)
+      ..close();
+    canvas.drawPath(outline, court);
+    canvas.drawLine(
+      Offset(size.width * .25, size.height * .47),
+      Offset(size.width * .75, size.height * .47),
+      court,
+    );
+    canvas.drawLine(
+      Offset(size.width * .5, size.height * .18),
+      Offset(size.width * .5, size.height * .72),
+      court,
+    );
+    final body = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+        center: Offset(size.width * .5, size.height * .87),
+        width: 22,
+        height: 13,
+      ),
+      const Radius.circular(3),
+    );
+    canvas.drawRRect(body, camera);
+    canvas.drawCircle(
+      Offset(size.width * .5, size.height * .87),
+      3.5,
+      Paint()..color = lineColor,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _RecordingGuidePainter oldDelegate) =>
+      oldDelegate.lineColor != lineColor ||
+      oldDelegate.cameraColor != cameraColor;
 }
 
 class _InputVideoMetadataCard extends StatelessWidget {
@@ -314,9 +551,13 @@ class _InputVideoMetadataCard extends StatelessWidget {
 }
 
 class _TargetPlayerCard extends StatelessWidget {
-  const _TargetPlayerCard({required this.viewModel});
+  const _TargetPlayerCard({
+    required this.viewModel,
+    required this.massController,
+  });
 
   final AnalysisViewModel viewModel;
+  final TextEditingController massController;
 
   @override
   Widget build(BuildContext context) {
@@ -327,12 +568,12 @@ class _TargetPlayerCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              '2. Athlete details',
+              '3. Athlete details',
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
             const Text(
-              'For this fixed-camera prototype, choose the athlete by their '
+              'For fixed-camera footage, choose the athlete by their '
               'court side at the start of the video.',
             ),
             const SizedBox(height: 16),
@@ -360,6 +601,7 @@ class _TargetPlayerCard extends StatelessWidget {
             const SizedBox(height: 18),
             TextField(
               key: const Key('athlete-mass-field'),
+              controller: massController,
               enabled: !viewModel.isProcessing,
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
@@ -370,7 +612,7 @@ class _TargetPlayerCard extends StatelessWidget {
                 hintText: 'For example, 75',
                 suffixText: 'kg',
                 border: OutlineInputBorder(),
-                helperText: 'Only needed for estimated force (20–250 kg).',
+                helperText: 'Optional. The primary profile uses N/kg; mass adds an absolute-N estimate.',
                 errorText: viewModel.massError,
               ),
             ),
@@ -443,15 +685,66 @@ class _ProgressPanel extends StatelessWidget {
   }
 }
 
-class AnalysisResultsView extends StatelessWidget {
-  const AnalysisResultsView({super.key, required this.result,
-    required this.targetPlayerLabel});
+class AnalysisResultsView extends StatefulWidget {
+  const AnalysisResultsView({
+    super.key,
+    required this.result,
+    required this.targetPlayerLabel,
+  });
 
   final AnalysisResult result;
   final String targetPlayerLabel;
 
   @override
+  State<AnalysisResultsView> createState() => _AnalysisResultsViewState();
+}
+
+class _AnalysisResultsViewState extends State<AnalysisResultsView> {
+  final _videoKey = GlobalKey<_AnnotatedVideoCardState>();
+  final _exportService = AnalysisExportService();
+  bool _exportingPdf = false;
+
+  Future<void> _openSprintEvents() async {
+    final url = widget.result.annotatedVideoUrl;
+    final player = widget.result.playerById(widget.result.selectedTrackId);
+    if (url == null || player == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => SprintEventsPage(
+          videoUrl: url,
+          events: player.forceVelocity.events,
+          recommendedEventIds: player.forceVelocity.recommendedEventIds,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _exportPdf() async {
+    if (_exportingPdf || widget.result.coachReportUrl == null) return;
+    setState(() => _exportingPdf = true);
+    try {
+      final path = await _exportService.saveCoachReport(widget.result);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            path == null ? 'Export cancelled.' : 'Coach PDF saved.',
+          ),
+        ),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not export the coach report. $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _exportingPdf = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final result = widget.result;
     final player = result.playerById(result.selectedTrackId);
 
     return Card(
@@ -461,9 +754,30 @@ class AnalysisResultsView extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              'Movement analysis results',
-              style: Theme.of(context).textTheme.titleLarge,
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    result.playerName == null
+                        ? 'Movement analysis results'
+                        : '${result.playerName} · Movement review',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                IconButton.filledTonal(
+                  key: const Key('top-export-pdf-button'),
+                  tooltip: 'Export coach report (PDF)',
+                  onPressed: _exportingPdf || result.coachReportUrl == null
+                      ? null
+                      : _exportPdf,
+                  icon: _exportingPdf
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.ios_share_outlined),
+                ),
+              ],
             ),
             if (result.courtCalibration case final calibration?) ...[
               const SizedBox(height: 12),
@@ -497,7 +811,7 @@ class AnalysisResultsView extends StatelessWidget {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.person_search_outlined),
-                title: Text(targetPlayerLabel),
+                title: Text(widget.targetPlayerLabel),
                 subtitle: const Text('Selected athlete movement report'),
               ),
               const SizedBox(height: 16),
@@ -535,7 +849,12 @@ class AnalysisResultsView extends StatelessWidget {
               const SizedBox(height: 12),
               _EffortTable(metric: player.overallEffort),
               const SizedBox(height: 12),
-              ForceVelocityChart(analysis: player.forceVelocity),
+              ForceVelocityChart(
+                analysis: player.forceVelocity,
+                onViewEvents: result.annotatedVideoUrl == null
+                    ? null
+                    : _openSprintEvents,
+              ),
             ],
             const SizedBox(height: 16),
             _ExportPanel(result: result),
@@ -545,7 +864,7 @@ class AnalysisResultsView extends StatelessWidget {
             ],
             const SizedBox(height: 16),
             if (result.annotatedVideoUrl case final String url)
-              _AnnotatedVideoCard(url: url)
+              _AnnotatedVideoCard(key: _videoKey, url: url)
             else
               const ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -576,41 +895,68 @@ class _EffortTable extends StatelessWidget {
       'AU per valid minute': 'Average points per minute of usable time: total divided by usable seconds, multiplied by 60. Not added to the total.',
       'Total load in AU': 'Speed, speeding-up and braking points combined for this tracked player. Longer usable clips can have higher totals.',
     };
-    String number(double? v) => v != null && v.isFinite ? v.toStringAsFixed(3) : '—';
-    TableRow row(String label, String value, {bool header = false, bool total = false}) {
+    String number(double? value) =>
+        value != null && value.isFinite ? value.toStringAsFixed(3) : '—';
+    TableRow row(
+      String label,
+      String value, {
+      bool header = false,
+      bool total = false,
+    }) {
       final style = theme.textTheme.bodyMedium?.copyWith(
         fontWeight: header || total ? FontWeight.bold : FontWeight.normal,
       );
       return TableRow(
-        decoration: BoxDecoration(color: header ? colors.surfaceContainerHighest : null),
+        decoration: BoxDecoration(
+          color: header ? colors.surfaceContainerHighest : null,
+        ),
         children: [
           Padding(
             padding: const EdgeInsets.all(8),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(label, style: style),
-              if (explanations[label] case final String explanation) ...[
-                const SizedBox(height: 4),
-                Text(explanation, style: theme.textTheme.bodySmall?.copyWith(
-                  color: colors.onSurfaceVariant, height: 1.4)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: style),
+                if (explanations[label] case final String explanation) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    explanation,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
               ],
-            ]),
+            ),
           ),
-          Padding(padding: const EdgeInsets.all(8), child: Text(value, textAlign: TextAlign.end, style: style)),
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Text(value, textAlign: TextAlign.end, style: style),
+          ),
         ],
       );
     }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Overall effort (experimental movement load)', style: theme.textTheme.titleMedium),
+        Text(
+          'Overall effort (experimental movement load)',
+          style: theme.textTheme.titleMedium,
+        ),
         const SizedBox(height: 8),
-        if (metric.method == 'metric_motion_load_v1' && metric.value?.isFinite == true) ...[
+        if (metric.method == 'metric_motion_load_v1' &&
+            metric.value?.isFinite == true) ...[
           Text(
             'AU means arbitrary units: movement points defined by this experimental model. '
-            'One second of steady movement at 2 m/s gives 1 AU. '
-            'These points are not calories, a fatigue measure or a score out of 100.',
+            'One second of steady movement at 2 m/s gives 1 AU. These points are not calories, '
+            'a fatigue measure or a score out of 100.',
             key: const Key('effort-au-explanation'),
-            style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant, height: 1.4),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colors.onSurfaceVariant,
+              height: 1.4,
+            ),
           ),
           const SizedBox(height: 8),
           Table(
@@ -620,17 +966,33 @@ class _EffortTable extends StatelessWidget {
             children: [
               row('Measure', 'Value', header: true),
               row('Usable seconds', number(metric.details['validSeconds'])),
-              row('Speed contribution in AU', number(metric.details['speedAU'])),
-              row('Acceleration contribution in AU', number(metric.details['accelerationAU'])),
-              row('Braking contribution in AU', number(metric.details['brakingAU'])),
-              row('AU per valid minute', number(metric.details['auPerValidMinute'])),
+              row(
+                'Speed contribution in AU',
+                number(metric.details['speedAU']),
+              ),
+              row(
+                'Acceleration contribution in AU',
+                number(metric.details['accelerationAU']),
+              ),
+              row(
+                'Braking contribution in AU',
+                number(metric.details['brakingAU']),
+              ),
+              row(
+                'AU per valid minute',
+                number(metric.details['auPerValidMinute']),
+              ),
               row('Total load in AU', number(metric.value), total: true),
             ],
           ),
           const SizedBox(height: 6),
-          Text(metric.note ?? 'External movement only; not fatigue or calories.'),
+          Text(
+            metric.note ?? 'External movement only; not fatigue or calories.',
+          ),
         ] else
-          const Text('Unavailable. A newly analysed clip with continuous, calibrated movement is required.'),
+          const Text(
+            'Unavailable. A newly analysed clip with continuous, calibrated movement is required.',
+          ),
       ],
     );
   }
@@ -647,7 +1009,14 @@ class _TrackingCoverageCard extends StatelessWidget {
     final trackedFrames =
         player.trackedFrames ?? player.movementPath.points.length;
     final processedFrames =
-        result.processedFrames ?? result.inputVideo?.frameCount;
+        player.coverageFrameCount ??
+        result.processedFrames ??
+        result.inputVideo?.frameCount;
+    final activePlay = result.rawData['activePlay'] as Map?;
+    final usesActivePlay =
+        activePlay != null &&
+        activePlay['activeFrames'] is num &&
+        (activePlay['activeFrames'] as num) > 0;
     final coverage = processedFrames != null && processedFrames > 0
         ? (trackedFrames / processedFrames).clamp(0.0, 1.0)
         : null;
@@ -666,7 +1035,7 @@ class _TrackingCoverageCard extends StatelessWidget {
                 const Icon(Icons.track_changes_outlined),
                 const SizedBox(width: 12),
                 Text(
-                  'Tracking coverage',
+                  usesActivePlay ? 'Active-play tracking' : 'Tracking coverage',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ],
@@ -683,18 +1052,11 @@ class _TrackingCoverageCard extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              'This shows how much of the processed video contained a usable '
-              'position for the selected athlete.',
+              usesActivePlay
+                  ? 'Player tracking during the match activity found in this video.'
+                  : 'Player tracking across the selected video.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
-            if (player.metricDurationSeconds case final double seconds) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Metric calculation covers ${seconds.toStringAsFixed(2)} s of screened intervals. '
-                '${player.excludedMetricSamples ?? 0} candidate samples excluded. '
-                'Distances exclude gaps and filter edges; they are not a full-session total.',
-              ),
-            ],
           ],
         ),
       ),
@@ -709,6 +1071,7 @@ class _MetricGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasMetricScale = player.speed.unit == 'm/s';
     return LayoutBuilder(
       builder: (context, constraints) {
         final cardWidth = constraints.maxWidth >= 620
@@ -724,8 +1087,8 @@ class _MetricGrid extends StatelessWidget {
               child: _MetricTile(
                 label: 'Total distance',
                 value: _formatMetric(
-                  player.totalDistance.value,
-                  player.totalDistance.unit,
+                  hasMetricScale ? player.totalDistance.value : null,
+                  hasMetricScale ? player.totalDistance.unit : null,
                 ),
                 icon: Icons.route_outlined,
                 note: player.totalDistance.note,
@@ -735,7 +1098,7 @@ class _MetricGrid extends StatelessWidget {
               width: cardWidth,
               child: _MetricTile(
                 label: 'Speed',
-                value: _formatSpeed(player.speed),
+                value: hasMetricScale ? _formatSpeed(player.speed) : '—',
                 icon: Icons.speed_outlined,
                 note: player.speed.note,
               ),
@@ -744,7 +1107,9 @@ class _MetricGrid extends StatelessWidget {
               width: cardWidth,
               child: _MetricTile(
                 label: 'Direction changes',
-                value: player.directionChanges.count?.toString() ?? '—',
+                value: hasMetricScale
+                    ? player.directionChanges.count?.toString() ?? '—'
+                    : '—',
                 icon: Icons.turn_sharp_right_outlined,
                 note: player.directionChanges.note,
               ),
@@ -864,7 +1229,7 @@ class _WarningsPanel extends StatelessWidget {
 }
 
 class _AnnotatedVideoCard extends StatefulWidget {
-  const _AnnotatedVideoCard({required this.url});
+  const _AnnotatedVideoCard({super.key, required this.url});
 
   final String url;
 
@@ -1093,19 +1458,15 @@ class _DirectionalMovement extends StatelessWidget {
   Widget build(BuildContext context) {
     final metres = player.movementPath.coordinateSystem.contains('court');
     final entries = [
-      (
-        metres ? 'Lateral movement' : 'Horizontal image movement',
-        player.leftRightDistance,
-      ),
-      (
-        metres ? 'Forward/back movement' : 'Vertical image movement',
-        player.forwardBackDistance,
-      ),
+      ('Lateral movement', player.leftRightDistance),
+      ('Forward/back movement', player.forwardBackDistance),
     ];
-    final largest = math.max(
-      player.leftRightDistance.value ?? 0,
-      player.forwardBackDistance.value ?? 0,
-    );
+    final largest = metres
+        ? math.max(
+            player.leftRightDistance.value ?? 0,
+            player.forwardBackDistance.value ?? 0,
+          )
+        : 0.0;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
@@ -1126,7 +1487,12 @@ class _DirectionalMovement extends StatelessWidget {
                 children: [
                   Expanded(child: Text(entry.$1)),
                   Text(
-                    _MetricGrid._formatMetric(entry.$2.value, entry.$2.unit),
+                    metres
+                        ? _MetricGrid._formatMetric(
+                            entry.$2.value,
+                            entry.$2.unit,
+                          )
+                        : '—',
                   ),
                 ],
               ),
@@ -1141,7 +1507,7 @@ class _DirectionalMovement extends StatelessWidget {
             Text(
               metres
                   ? 'Accumulated court-axis distances; diagonal movement contributes to both axes. Their sum is not total distance.'
-                  : 'Pixel demonstration mode. Horizontal/vertical image movement is not real-world court left-right/forward-back distance.',
+                  : 'Court mapping was not reliable enough to report real-world distance. Pixel measurements are excluded from coach-facing results.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -1262,45 +1628,66 @@ class _ExportPanelState extends State<_ExportPanel> {
     children: [
       Text('Export results', style: Theme.of(context).textTheme.titleMedium),
       const SizedBox(height: 8),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
+      FilledButton.icon(
+        key: const Key('export-pdf-button'),
+        onPressed: _busy || widget.result.coachReportUrl == null
+            ? null
+            : () => _save(() => _service.saveCoachReport(widget.result)),
+        icon: const Icon(Icons.picture_as_pdf_outlined),
+        label: const Text('Export coach report (PDF)'),
+      ),
+      const SizedBox(height: 8),
+      OutlinedButton.icon(
+        key: const Key('export-video-button'),
+        onPressed: _busy || widget.result.annotatedVideoUrl == null
+            ? null
+            : () => _save(() => _service.saveVideo(widget.result)),
+        icon: const Icon(Icons.download_outlined),
+        label: const Text('Save annotated video'),
+      ),
+      const SizedBox(height: 8),
+      ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        title: const Text('Advanced data export'),
+        subtitle: const Text(
+          'For technical review, not required for coach reports',
+        ),
         children: [
-          OutlinedButton.icon(
-            key: const Key('export-csv-button'),
-            onPressed: _busy
-                ? null
-                : () =>
-                      _save(() => _service.saveData(widget.result, csv: true)),
-            icon: const Icon(Icons.table_chart_outlined),
-            label: const Text('Export CSV'),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                key: const Key('export-csv-button'),
+                onPressed: _busy
+                    ? null
+                    : () => _save(
+                        () => _service.saveData(widget.result, csv: true),
+                      ),
+                icon: const Icon(Icons.table_chart_outlined),
+                label: const Text('Export CSV'),
+              ),
+              OutlinedButton.icon(
+                key: const Key('export-json-button'),
+                onPressed: _busy
+                    ? null
+                    : () => _save(
+                        () => _service.saveData(widget.result, csv: false),
+                      ),
+                icon: const Icon(Icons.data_object),
+                label: const Text('Export JSON'),
+              ),
+              if (widget.result.rawData['reportArchiveUrl'] is String)
+                OutlinedButton.icon(
+                  key: const Key('export-reports-button'),
+                  onPressed: _busy
+                      ? null
+                      : () => _save(() => _service.saveReports(widget.result)),
+                  icon: const Icon(Icons.folder_zip_outlined),
+                  label: const Text('Save report images + data'),
+                ),
+            ],
           ),
-          OutlinedButton.icon(
-            key: const Key('export-json-button'),
-            onPressed: _busy
-                ? null
-                : () =>
-                      _save(() => _service.saveData(widget.result, csv: false)),
-            icon: const Icon(Icons.data_object),
-            label: const Text('Export JSON'),
-          ),
-          OutlinedButton.icon(
-            key: const Key('export-video-button'),
-            onPressed: _busy || widget.result.annotatedVideoUrl == null
-                ? null
-                : () => _save(() => _service.saveVideo(widget.result)),
-            icon: const Icon(Icons.download_outlined),
-            label: const Text('Save annotated video'),
-          ),
-          if (widget.result.rawData['reportArchiveUrl'] is String)
-            OutlinedButton.icon(
-              key: const Key('export-reports-button'),
-              onPressed: _busy
-                  ? null
-                  : () => _save(() => _service.saveReports(widget.result)),
-              icon: const Icon(Icons.folder_zip_outlined),
-              label: const Text('Save report images + data'),
-            ),
         ],
       ),
       if (_busy) const LinearProgressIndicator(),

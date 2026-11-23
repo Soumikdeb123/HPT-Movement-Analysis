@@ -5,6 +5,7 @@ import '../models/analysis_result.dart';
 import '../repositories/analysis_gateway.dart';
 import '../repositories/http_analysis_gateway.dart';
 import '../services/analysis_video_picker.dart';
+import '../../players/models/player_profile.dart';
 
 enum AnalysisStatus {
   idle,
@@ -31,7 +32,9 @@ class AnalysisViewModel extends ChangeNotifier {
   InputVideoMetadata? validatedVideoMetadata;
   String? errorMessage;
   TargetPlayerPosition targetPlayer = TargetPlayerPosition.nearCourt;
+  PlayerProfile? player;
   double? athleteMassKg;
+  List<NormalizedCourtPoint>? courtCorners;
   String? massError;
   AnalysisCancellationToken? _cancellationToken;
   int _operationGeneration = 0;
@@ -46,6 +49,7 @@ class AnalysisViewModel extends ChangeNotifier {
   bool get isSelectingVideo => status == AnalysisStatus.selectingVideo;
   bool get canStart =>
       selectedVideo != null &&
+      player != null &&
       !isProcessing &&
       !isSelectingVideo &&
       !isClearingResult &&
@@ -55,7 +59,25 @@ class AnalysisViewModel extends ChangeNotifier {
     return players == null || players.isEmpty ? null : players.first;
   }
 
-  Future<void> selectVideo() async {
+  void selectPlayer(PlayerProfile value) {
+    if (isProcessing) return;
+    player = value;
+    notifyListeners();
+  }
+
+  void restoreSelectedVideo(SelectedVideo video) {
+    if (isProcessing || isSelectingVideo || isClearingResult) return;
+    selectedVideo = video;
+    courtCorners = null;
+    result = null;
+    validatedVideoMetadata = null;
+    progress = 0;
+    errorMessage = null;
+    status = AnalysisStatus.videoSelected;
+    notifyListeners();
+  }
+
+  Future<void> selectVideo({AnalysisVideoPicker? picker}) async {
     if (isProcessing || isSelectingVideo || isClearingResult) return;
 
     final previousStatus = status;
@@ -64,7 +86,7 @@ class AnalysisViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final video = await _videoPicker.pickVideo();
+      final video = await (picker ?? _videoPicker).pickVideo();
       if (video == null) {
         status = selectedVideo == null
             ? AnalysisStatus.idle
@@ -74,6 +96,7 @@ class AnalysisViewModel extends ChangeNotifier {
       }
 
       selectedVideo = video;
+      courtCorners = null;
       result = null;
       validatedVideoMetadata = null;
       progress = 0;
@@ -105,10 +128,17 @@ class AnalysisViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  void updateCourtCorners(List<NormalizedCourtPoint>? value) {
+    if (isProcessing || isSelectingVideo || isClearingResult) return;
+    courtCorners = value == null ? null : List.unmodifiable(value);
+    notifyListeners();
+  }
+
   Future<void> startAnalysis() async {
     final video = selectedVideo;
+    final selectedPlayer = player;
     final massKg = athleteMassKg;
-    if (video == null || !canStart) return;
+    if (video == null || selectedPlayer == null || !canStart) return;
 
     status = AnalysisStatus.validating;
     progress = 0;
@@ -126,8 +156,11 @@ class AnalysisViewModel extends ChangeNotifier {
         AnalysisRequest(
           videoPath: video.path,
           videoName: video.name,
+          playerId: selectedPlayer.id,
+          playerName: selectedPlayer.name,
           targetPlayer: targetPlayer,
           athleteMassKg: massKg,
+          courtCorners: courtCorners,
         ),
         onVideoValidated: (metadata) {
           if (operationGeneration != _operationGeneration) return;
@@ -214,6 +247,7 @@ class AnalysisViewModel extends ChangeNotifier {
     validatedVideoMetadata = null;
     errorMessage = null;
     targetPlayer = TargetPlayerPosition.nearCourt;
+    courtCorners = null;
     // The mass field remains mounted after clearing a result, so retain its value.
   }
 

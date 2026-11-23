@@ -6,6 +6,7 @@ from hpt_tracking.tracking_engine import (
     Detection,
     Track,
     YuchenPrototypeTrackingEngine,
+    merge_target_track_segments,
     select_primary_tracks,
 )
 
@@ -62,3 +63,56 @@ def test_fixed_camera_fallback_keeps_only_selected_court_side():
 
     assert near == [near_player]
     assert far == [far_player]
+
+
+def test_non_overlapping_target_fragments_are_combined_without_filling_gap():
+    first = _track(1, range(0, 20))
+    first.court_trajectory = [(frame, frame / 10, 20.0) for frame in range(0, 20)]
+    second = _track(2, range(50, 80))
+    second.court_trajectory = [(frame, frame / 10, 20.0) for frame in range(50, 80)]
+
+    merged = merge_target_track_segments([second, first])
+
+    assert merged is not None
+    assert len(merged.image_trajectory) == 50
+    assert merged.image_trajectory[19][0] == 19
+    assert merged.image_trajectory[20][0] == 50
+
+
+def test_metric_target_filter_excludes_people_far_behind_the_baseline():
+    corners = np.asarray(
+        [[100, 100], [200, 100], [300, 400], [0, 400]], dtype=np.float32
+    )
+    target = np.asarray(
+        [[0, 0], [10.97, 0], [10.97, 23.77], [0, 23.77]], dtype=np.float32
+    )
+    import cv2
+
+    calibration = CourtCalibration(
+        corners=corners,
+        homography=cv2.getPerspectiveTransform(corners, target),
+        confidence=0.9,
+    )
+    far_player = Detection((0, 0, 10, 10), .9, court_position=(5.0, 2.0))
+    spectator = Detection((0, 0, 10, 10), .99, court_position=(5.0, -7.0))
+
+    selected = YuchenPrototypeTrackingEngine._select_target_detection(
+        [spectator, far_player], "far", calibration, frame_height=720
+    )
+
+    assert selected == [far_player]
+
+
+def test_edge_touching_detection_remains_in_metric_motion():
+    track = _track(1, [])
+    detection = Detection(
+        (0.0, 300.0, 80.0, 576.0),
+        0.9,
+        court_position=(1.0, 22.0),
+    )
+
+    track.update(12, detection)
+
+    assert track.image_trajectory == [(12, 40.0, 576.0)]
+    assert track.court_trajectory == [(12, 1.0, 22.0)]
+    assert track.bbox_history[12] == detection.bbox

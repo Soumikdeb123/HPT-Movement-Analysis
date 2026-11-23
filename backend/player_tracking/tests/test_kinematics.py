@@ -6,6 +6,7 @@ from hpt_tracking.kinematics import (
     analyse_force_velocity,
     assess_metric_trajectory,
 )
+from hpt_tracking.metric_motion import force_velocity_profile
 
 
 def _trajectory(position_at_time, seconds=4.0, fps=30.0):
@@ -79,3 +80,51 @@ def test_many_impossible_jumps_reject_the_metric_trajectory():
 
     assert assessment["status"] == "rejected"
     assert assessment["rejectedStepRatio"] > 0.25
+
+
+def test_sustained_acceleration_creates_reviewable_video_events_without_faking_curve():
+    # Constant acceleration creates events, but not the descending evidence
+    # required for a genuine match Force–Velocity relationship.
+    fps = 30
+    samples = []
+    frame = 0
+    x = 0.0
+    for _ in range(8):
+        for step in range(30):
+            t = step / fps
+            x += (0.4 + 2.0*t) / fps
+            samples.append((frame, x, 5.0))
+            frame += 1
+        frame += 10  # tracking gap intentionally separates events
+    result = analyse_force_velocity(samples, fps, None, .95)
+    assert result["method"] == "estimated_match_fv_v3"
+    assert result["forceUnit"] == "N/kg"
+    assert result["events"]
+    assert all(event["videoSeekStartSeconds"] <= event["startTimeSeconds"]
+               for event in result["events"])
+    assert result["fit"] is None
+    assert result["currentCurve"] == []
+    assert result["quality"]["reasons"]
+    assert result["speedBins"] == []
+
+
+def test_event_balanced_match_profile_draws_only_observed_descending_curve():
+    events = []
+    for event_index in range(6):
+        samples = []
+        for sample_index in range(8):
+            speed = .6 + sample_index * .25
+            samples.append({
+                "speed": speed,
+                "acceleration": 2.4 - .55 * speed + event_index * .01,
+            })
+        events.append({"_samples": samples})
+
+    quality, fit, curve = force_velocity_profile(events, .9, .95)
+
+    assert quality["status"] in {"limited", "good"}
+    assert fit["slopeNPerKgPerMps"] < 0
+    assert len(curve) == 24
+    assert curve[0]["velocityMps"] == pytest.approx(.6)
+    assert curve[-1]["velocityMps"] == pytest.approx(2.35)
+    assert curve[0]["forceNPerKg"] > curve[-1]["forceNPerKg"]

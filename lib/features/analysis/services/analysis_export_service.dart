@@ -185,6 +185,39 @@ class AnalysisExportService {
     );
   }
 
+  Future<String?> saveCoachReport(AnalysisResult result) async {
+    final url = result.coachReportUrl;
+    if (url == null) throw StateError('No coach PDF is available.');
+    final response = await http
+        .get(
+          Uri.parse(url),
+          headers: {
+            if (AuthRepository.token != null)
+              'Authorization': 'Bearer ${AuthRepository.token}',
+          },
+        )
+        .timeout(const Duration(minutes: 2));
+    if (response.statusCode != 200) {
+      throw StateError(
+        'Coach report download failed (HTTP ${response.statusCode}).',
+      );
+    }
+    final safePlayer = (result.playerName ?? 'player').replaceAll(
+      RegExp(r'[^A-Za-z0-9_-]+'),
+      '-',
+    );
+    final shortId = result.analysisId.length <= 8
+        ? result.analysisId
+        : result.analysisId.substring(0, 8);
+    return FilePicker.platform.saveFile(
+      dialogTitle: 'Save coach report',
+      fileName: 'hpt-$safePlayer-$shortId.pdf',
+      type: FileType.custom,
+      allowedExtensions: const ['pdf'],
+      bytes: response.bodyBytes,
+    );
+  }
+
   Future<String?> saveVideo(AnalysisResult result) async {
     final url = result.annotatedVideoUrl;
     if (url == null) throw StateError('No annotated video is available.');

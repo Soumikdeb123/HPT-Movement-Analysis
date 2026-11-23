@@ -18,8 +18,7 @@ void main() {
         ),
       ),
     );
-    await tester.tap(find.byKey(const Key('select-video-button')));
-    await tester.pumpAndSettle();
+    await _chooseFileVideo(tester);
     final start = find.byKey(const Key('start-analysis-button'));
     await tester.ensureVisible(start);
     await tester.pumpAndSettle();
@@ -46,8 +45,7 @@ void main() {
     final startButton = find.byKey(const Key('start-analysis-button'));
     expect(tester.widget<FilledButton>(startButton).onPressed, isNull);
 
-    await tester.tap(find.byKey(const Key('select-video-button')));
-    await tester.pumpAndSettle();
+    await _chooseFileVideo(tester);
 
     expect(find.text('client-video.mp4'), findsOneWidget);
     expect(find.text('Near-court player'), findsOneWidget);
@@ -63,35 +61,26 @@ void main() {
 
     expect(find.byKey(const Key('analysis-results')), findsOneWidget);
     expect(find.text('Movement analysis results'), findsOneWidget);
-    expect(find.text('Tracking coverage'), findsOneWidget);
-    expect(find.text('80 of 100 frames • 80%'), findsOneWidget);
+    expect(find.text('Active-play tracking'), findsOneWidget);
+    expect(find.text('80 of 90 frames • 89%'), findsOneWidget);
     expect(find.text('500 m'), findsOneWidget);
     expect(find.text('Acceleration'), findsNothing);
     expect(find.text('Deceleration'), findsNothing);
     expect(find.text('Direction changes'), findsOneWidget);
-    expect(find.text('Experimental'), findsWidgets);
+    expect(find.text('Limited evidence'), findsOneWidget);
     expect(find.text('Heatmap'), findsNothing);
     expect(find.text('Directional movement'), findsOneWidget);
     expect(find.text('Pixel effort index (demo)'), findsNothing);
-    final table = tester.widget<Table>(find.ancestor(of: find.text('Total load in AU'), matching: find.byType(Table)));
-    final cells = table.children.map((row) => [
-      (((row.children.first as Padding).child as Column).children.first as Text),
-      (row.children.last as Padding).child as Text,
-    ]).toList();
-    expect(cells.map((r) => r.last.data), ['Value', '12.000', '7.000', '2.000', '1.000', '50.000', '10.000']);
-    expect(cells.last.first.data, 'Total load in AU');
-    expect(cells.last.every((text) => text.style?.fontWeight == FontWeight.bold), isTrue);
-    expect(find.byKey(const Key('effort-au-explanation')), findsOneWidget);
-    expect(find.textContaining('not calories, a fatigue measure'), findsOneWidget);
-    for (final row in table.children.skip(1)) {
-      final label = (row.children.first as Padding).child as Column;
-      expect(label.children.whereType<Text>().length, 2);
-    }
-    expect(find.text('3. Review prototype scope'), findsNothing);
     expect(
-      find.text('Estimated Force-Velocity'),
+      find.text('Overall effort (experimental movement load)'),
       findsOneWidget,
     );
+    expect(find.text('What this video shows'), findsOneWidget);
+    expect(find.text('Low-speed acceleration'), findsNothing);
+    expect(find.text('Mid-speed acceleration'), findsNothing);
+    expect(find.text('High-speed acceleration'), findsNothing);
+    expect(find.text('3. Review prototype scope'), findsNothing);
+    expect(find.text('Match Sprint Force–Velocity'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.byKey(const Key('force-velocity-chart')).first,
       400,
@@ -99,8 +88,20 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('force-velocity-chart')), findsWidgets);
+    expect(find.text('This match'), findsOneWidget);
+    expect(find.text('Personal baseline'), findsOneWidget);
+    expect(
+      find.byKey(const Key('view-all-sprint-events-button')),
+      findsOneWidget,
+    );
+    final advancedExport = find.text('Advanced data export');
+    await tester.ensureVisible(advancedExport);
+    await tester.pumpAndSettle();
+    await tester.tap(advancedExport);
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('export-csv-button')), findsOneWidget);
     expect(find.byKey(const Key('export-json-button')), findsOneWidget);
+    expect(find.byKey(const Key('export-pdf-button')), findsOneWidget);
     expect(find.byKey(const Key('export-video-button')), findsOneWidget);
 
     final clearButton = find.byKey(const Key('clear-analysis-button'));
@@ -115,6 +116,16 @@ void main() {
     expect(find.byKey(const Key('analysis-results')), findsNothing);
     expect(find.text('Choose video'), findsOneWidget);
   });
+}
+
+Future<void> _chooseFileVideo(WidgetTester tester) async {
+  final button = find.byKey(const Key('select-video-button'));
+  await tester.ensureVisible(button);
+  await tester.pumpAndSettle();
+  await tester.tap(button);
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Choose from Files'));
+  await tester.pumpAndSettle();
 }
 
 class _PixelGateway extends _ImmediateGateway {
@@ -188,15 +199,24 @@ class _ImmediateGateway implements AnalysisGateway {
           'lengthMeters': 23.77,
         },
         'video': {'processedFrames': 100},
+        'activePlay': {
+          'status': 'accepted',
+          'confidence': 0.86,
+          'activeFrames': 90,
+        },
         'selectedTrackId': '0',
         'players': [
           {
             'trackId': '0',
             'trackedFrames': 80,
+            'coverageFrameCount': 90,
             'overallEffort': {
               'method': 'metric_motion_load_v1',
-              'validSeconds': 12, 'speedAU': 7, 'accelerationAU': 2,
-              'brakingAU': 1, 'auPerValidMinute': 50,
+              'validSeconds': 12,
+              'speedAU': 7,
+              'accelerationAU': 2,
+              'brakingAU': 1,
+              'auPerValidMinute': 50,
               'status': 'experimental',
               'value': 10,
               'unit': 'AU',
@@ -226,11 +246,49 @@ class _ImmediateGateway implements AnalysisGateway {
             'directionChanges': {'status': 'unavailable'},
             'forceVelocity': {
               'status': 'experimental',
+              'algorithmVersion': '3.0.0',
               'massKg': 75,
               'maximumVelocityMps': 4,
               'peakPropulsiveForceN': 120,
               'peakBrakingForceN': 90,
               'note': 'Estimated from entered body mass and video-derived acceleration.',
+              'quality': {
+                'status': 'limited',
+                'trackingCoverage': 0.8,
+                'calibrationConfidence': 0.96,
+                'validEventCount': 4,
+                'reasons': <String>[],
+              },
+              'speedBins': <Object>[],
+              'currentCurve': [
+                {'velocityMps': 1.0, 'forceNPerKg': 1.6},
+                {'velocityMps': 2.0, 'forceNPerKg': 1.3},
+                {'velocityMps': 3.0, 'forceNPerKg': 1.0},
+              ],
+              'baselineCurve': [
+                {'velocityMps': 1.0, 'forceNPerKg': 1.7},
+                {'velocityMps': 2.0, 'forceNPerKg': 1.4},
+                {'velocityMps': 3.0, 'forceNPerKg': 1.1},
+              ],
+              'comparisonSummary': 'This match identified 1 valid sprint acceleration and was close to the personal baseline.',
+              'events': [
+                {
+                  'eventId': 'event-1',
+                  'startTimeSeconds': 0.0,
+                  'endTimeSeconds': 1.0,
+                  'durationSeconds': 1.0,
+                  'videoSeekStartSeconds': 0.0,
+                  'videoSeekEndSeconds': 2.0,
+                  'startSpeedMps': 1.0,
+                  'peakSpeedMps': 2.0,
+                  'deltaSpeedMps': 1.0,
+                  'meanForceNPerKg': 1.6,
+                  'startX': 0.0,
+                  'startY': 0.0,
+                  'endX': 1.0,
+                  'endY': 0.0,
+                },
+              ],
               'samples': [
                 {
                   'timeSeconds': 0,

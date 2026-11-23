@@ -113,7 +113,13 @@ class NumericMetric {
     return NumericMetric(
       details: {
         if (json['method'] == 'metric_motion_load_v1')
-          for (final key in ['validSeconds', 'speedAU', 'accelerationAU', 'brakingAU', 'auPerValidMinute'])
+          for (final key in [
+            'validSeconds',
+            'speedAU',
+            'accelerationAU',
+            'brakingAU',
+            'auPerValidMinute',
+          ])
             key: _doubleFromJson(json[key]),
       },
       method: json['method'] as String?,
@@ -173,7 +179,8 @@ class ForceVelocitySample {
     required this.timeSeconds,
     required this.velocityMps,
     required this.accelerationMps2,
-    required this.estimatedNetForceN,
+    this.estimatedNetForceN,
+    required this.estimatedForceNPerKg,
     required this.phase,
   });
 
@@ -183,7 +190,11 @@ class ForceVelocitySample {
       velocityMps: _doubleFromJson(json['velocityMps']) ?? 0,
       accelerationMps2:
           _doubleFromJson(json['tangentialAccelerationMps2']) ?? 0,
-      estimatedNetForceN: _doubleFromJson(json['estimatedNetForceN']) ?? 0,
+      estimatedNetForceN: _doubleFromJson(json['estimatedNetForceN']),
+      estimatedForceNPerKg:
+          _doubleFromJson(json['estimatedForceNPerKg']) ??
+          _doubleFromJson(json['tangentialAccelerationMps2']) ??
+          0,
       phase: json['phase'] as String? ?? 'steady',
     );
   }
@@ -191,14 +202,182 @@ class ForceVelocitySample {
   final double timeSeconds;
   final double velocityMps;
   final double accelerationMps2;
-  final double estimatedNetForceN;
+  final double? estimatedNetForceN;
+  final double estimatedForceNPerKg;
   final String phase;
+}
+
+class ForceVelocityEvent {
+  const ForceVelocityEvent({
+    required this.id,
+    required this.startTimeSeconds,
+    required this.endTimeSeconds,
+    required this.seekStartSeconds,
+    required this.seekEndSeconds,
+    required this.startSpeedMps,
+    required this.peakSpeedMps,
+    required this.meanForceNPerKg,
+    this.durationSeconds = 0,
+    this.deltaSpeedMps = 0,
+    required this.startX,
+    required this.startY,
+    required this.endX,
+    required this.endY,
+  });
+
+  factory ForceVelocityEvent.fromJson(Map<String, dynamic> json) =>
+      ForceVelocityEvent(
+        id: json['eventId'] as String? ?? 'event',
+        startTimeSeconds: _doubleFromJson(json['startTimeSeconds']) ?? 0,
+        endTimeSeconds: _doubleFromJson(json['endTimeSeconds']) ?? 0,
+        seekStartSeconds: _doubleFromJson(json['videoSeekStartSeconds']) ?? 0,
+        seekEndSeconds: _doubleFromJson(json['videoSeekEndSeconds']) ?? 0,
+        startSpeedMps: _doubleFromJson(json['startSpeedMps']) ?? 0,
+        peakSpeedMps: _doubleFromJson(json['peakSpeedMps']) ?? 0,
+        meanForceNPerKg: _doubleFromJson(json['meanForceNPerKg']) ?? 0,
+        durationSeconds: _doubleFromJson(json['durationSeconds']) ?? 0,
+        deltaSpeedMps: _doubleFromJson(json['deltaSpeedMps']) ?? 0,
+        startX: _doubleFromJson(json['startX']) ?? 0,
+        startY: _doubleFromJson(json['startY']) ?? 0,
+        endX: _doubleFromJson(json['endX']) ?? 0,
+        endY: _doubleFromJson(json['endY']) ?? 0,
+      );
+
+  final String id;
+  final double startTimeSeconds;
+  final double endTimeSeconds;
+  final double seekStartSeconds;
+  final double seekEndSeconds;
+  final double startSpeedMps;
+  final double peakSpeedMps;
+  final double meanForceNPerKg;
+  final double durationSeconds;
+  final double deltaSpeedMps;
+  final double startX;
+  final double startY;
+  final double endX;
+  final double endY;
+}
+
+class ForceVelocityCurvePoint {
+  const ForceVelocityCurvePoint({
+    required this.velocityMps,
+    required this.forceNPerKg,
+  });
+
+  factory ForceVelocityCurvePoint.fromJson(Map<String, dynamic> json) =>
+      ForceVelocityCurvePoint(
+        velocityMps: _doubleFromJson(json['velocityMps']) ?? 0,
+        forceNPerKg: _doubleFromJson(json['forceNPerKg']) ?? 0,
+      );
+
+  final double velocityMps;
+  final double forceNPerKg;
+}
+
+class ForceVelocitySpeedBin {
+  const ForceVelocitySpeedBin({
+    required this.label,
+    required this.minSpeedMps,
+    this.maxSpeedMps,
+    this.representativeForceNPerKg,
+    this.eventCount = 0,
+    this.evidenceStatus = 'unavailable',
+    this.comparisonStatus = 'no_baseline',
+    this.baselineMedian,
+    this.baselineLow,
+    this.baselineHigh,
+    this.changePercent,
+    this.representativeEventIds = const [],
+  });
+
+  factory ForceVelocitySpeedBin.fromJson(Map<String, dynamic> json) =>
+      ForceVelocitySpeedBin(
+        label: json['label'] as String? ?? 'unknown',
+        minSpeedMps: _doubleFromJson(json['minSpeedMps']) ?? 0,
+        maxSpeedMps: _doubleFromJson(json['maxSpeedMps']),
+        representativeForceNPerKg: _doubleFromJson(
+          json['representativeForceNPerKg'],
+        ),
+        eventCount: _intFromJson(json['eventCount']) ?? 0,
+        evidenceStatus: json['evidenceStatus'] as String? ?? 'unavailable',
+        comparisonStatus: json['comparisonStatus'] as String? ?? 'no_baseline',
+        baselineMedian: _doubleFromJson(json['baselineMedian']),
+        baselineLow: _doubleFromJson(json['baselineLow']),
+        baselineHigh: _doubleFromJson(json['baselineHigh']),
+        changePercent: _doubleFromJson(json['changePercent']),
+        representativeEventIds:
+            (json['representativeEventIds'] as List? ?? const [])
+                .whereType<String>()
+                .toList(growable: false),
+      );
+
+  final String label;
+  final double minSpeedMps;
+  final double? maxSpeedMps;
+  final double? representativeForceNPerKg;
+  final int eventCount;
+  final String evidenceStatus;
+  final String comparisonStatus;
+  final double? baselineMedian;
+  final double? baselineLow;
+  final double? baselineHigh;
+  final double? changePercent;
+  final List<String> representativeEventIds;
+
+  String get title => switch (label) {
+    'low' => 'Low-speed acceleration',
+    'mid' => 'Mid-speed acceleration',
+    'high' => 'High-speed acceleration',
+    _ => 'Acceleration',
+  };
+
+  String get rangeLabel => maxSpeedMps == null
+      ? '≥${minSpeedMps.toStringAsFixed(1)} m/s'
+      : '${minSpeedMps.toStringAsFixed(1)}–${maxSpeedMps!.toStringAsFixed(1)} m/s';
+}
+
+class ForceVelocityQuality {
+  const ForceVelocityQuality({
+    this.status = 'unavailable',
+    this.trackingCoverage = 0,
+    this.calibrationConfidence = 0,
+    this.validEventCount = 0,
+    this.reasons = const [],
+  });
+
+  factory ForceVelocityQuality.fromJson(Map<String, dynamic> json) =>
+      ForceVelocityQuality(
+        status: json['status'] as String? ?? 'unavailable',
+        trackingCoverage: _doubleFromJson(json['trackingCoverage']) ?? 0,
+        calibrationConfidence:
+            _doubleFromJson(json['calibrationConfidence']) ?? 0,
+        validEventCount: _intFromJson(json['validEventCount']) ?? 0,
+        reasons: (json['reasons'] as List? ?? const [])
+            .whereType<String>()
+            .toList(growable: false),
+      );
+
+  final String status;
+  final double trackingCoverage;
+  final double calibrationConfidence;
+  final int validEventCount;
+  final List<String> reasons;
 }
 
 class ForceVelocityAnalysis {
   const ForceVelocityAnalysis({
     required this.status,
     required this.samples,
+    this.events = const [],
+    this.currentCurve = const [],
+    this.baselineCurve = const [],
+    this.speedBins = const [],
+    this.quality = const ForceVelocityQuality(),
+    this.algorithmVersion,
+    this.baselineAnalysisCount = 0,
+    this.comparisonSummary,
+    this.recommendedEventIds = const [],
     this.massKg,
     this.maximumVelocityMps,
     this.peakPropulsiveForceN,
@@ -209,6 +388,15 @@ class ForceVelocityAnalysis {
   const ForceVelocityAnalysis.unavailable()
     : status = MetricStatus.unavailable,
       samples = const [],
+      events = const [],
+      currentCurve = const [],
+      baselineCurve = const [],
+      speedBins = const [],
+      quality = const ForceVelocityQuality(),
+      algorithmVersion = null,
+      baselineAnalysisCount = 0,
+      comparisonSummary = null,
+      recommendedEventIds = const [],
       massKg = null,
       maximumVelocityMps = null,
       peakPropulsiveForceN = null,
@@ -227,7 +415,6 @@ class ForceVelocityAnalysis {
                     'timeSeconds',
                     'velocityMps',
                     'tangentialAccelerationMps2',
-                    'estimatedNetForceN',
                   ].every((key) => _doubleFromJson(s[key]) != null),
                 )
                 .map(
@@ -237,6 +424,45 @@ class ForceVelocityAnalysis {
                 )
                 .toList(growable: false)
           : const [],
+      events: (json['events'] as List? ?? const [])
+          .whereType<Map>()
+          .map(
+            (item) =>
+                ForceVelocityEvent.fromJson(Map<String, dynamic>.from(item)),
+          )
+          .toList(growable: false),
+      currentCurve: (json['currentCurve'] as List? ?? const [])
+          .whereType<Map>()
+          .map(
+            (item) => ForceVelocityCurvePoint.fromJson(
+              Map<String, dynamic>.from(item),
+            ),
+          )
+          .toList(growable: false),
+      baselineCurve: (json['baselineCurve'] as List? ?? const [])
+          .whereType<Map>()
+          .map(
+            (item) => ForceVelocityCurvePoint.fromJson(
+              Map<String, dynamic>.from(item),
+            ),
+          )
+          .toList(growable: false),
+      speedBins: (json['speedBins'] as List? ?? const [])
+          .whereType<Map>()
+          .map(
+            (item) =>
+                ForceVelocitySpeedBin.fromJson(Map<String, dynamic>.from(item)),
+          )
+          .toList(growable: false),
+      quality: ForceVelocityQuality.fromJson(
+        Map<String, dynamic>.from(json['quality'] as Map? ?? const {}),
+      ),
+      algorithmVersion: json['algorithmVersion'] as String?,
+      baselineAnalysisCount: _intFromJson(json['baselineAnalysisCount']) ?? 0,
+      comparisonSummary: json['comparisonSummary'] as String?,
+      recommendedEventIds: (json['recommendedEventIds'] as List? ?? const [])
+          .whereType<String>()
+          .toList(growable: false),
       massKg: _doubleFromJson(json['massKg']),
       maximumVelocityMps: _doubleFromJson(json['maximumVelocityMps']),
       peakPropulsiveForceN: _doubleFromJson(json['peakPropulsiveForceN']),
@@ -247,6 +473,15 @@ class ForceVelocityAnalysis {
 
   final MetricStatus status;
   final List<ForceVelocitySample> samples;
+  final List<ForceVelocityEvent> events;
+  final List<ForceVelocityCurvePoint> currentCurve;
+  final List<ForceVelocityCurvePoint> baselineCurve;
+  final List<ForceVelocitySpeedBin> speedBins;
+  final ForceVelocityQuality quality;
+  final String? algorithmVersion;
+  final int baselineAnalysisCount;
+  final String? comparisonSummary;
+  final List<String> recommendedEventIds;
   final double? massKg;
   final double? maximumVelocityMps;
   final double? peakPropulsiveForceN;
@@ -280,6 +515,7 @@ class PlayerAnalysis {
     required this.deceleration,
     required this.directionChanges,
     this.trackedFrames,
+    this.coverageFrameCount,
     this.metricDurationSeconds,
     this.excludedMetricSamples,
     this.forceVelocity = const ForceVelocityAnalysis.unavailable(),
@@ -306,6 +542,7 @@ class PlayerAnalysis {
       ),
       overallEffort: NumericMetric.fromJson(object('overallEffort')),
       trackedFrames: _intFromJson(json['trackedFrames']),
+      coverageFrameCount: _intFromJson(json['coverageFrameCount']),
       metricDurationSeconds: _doubleFromJson(
         object('coverage')['validDurationSeconds'],
       ),
@@ -329,6 +566,7 @@ class PlayerAnalysis {
   final NumericMetric forwardBackDistance;
   final NumericMetric overallEffort;
   final int? trackedFrames;
+  final int? coverageFrameCount;
   final double? metricDurationSeconds;
   final int? excludedMetricSamples;
   final String trackId;
@@ -436,6 +674,9 @@ class AnalysisResult {
     required this.warnings,
     this.selectedTrackId,
     this.annotatedVideoUrl,
+    this.coachReportUrl,
+    this.playerId,
+    this.playerName,
     this.courtCalibration,
     this.algorithm,
     this.inferenceDevice,
@@ -473,6 +714,9 @@ class AnalysisResult {
                 .toList(growable: false)
           : const [],
       annotatedVideoUrl: json['annotatedVideoUrl'] as String?,
+      coachReportUrl: json['coachReportUrl'] as String?,
+      playerId: json['playerId'] as String?,
+      playerName: json['playerName'] as String?,
       courtCalibration: json['courtCalibration'] is Map
           ? CourtCalibrationResult.fromJson(
               Map<String, dynamic>.from(json['courtCalibration'] as Map),
@@ -496,6 +740,9 @@ class AnalysisResult {
   final String? selectedTrackId;
   final List<PlayerAnalysis> players;
   final String? annotatedVideoUrl;
+  final String? coachReportUrl;
+  final String? playerId;
+  final String? playerName;
   final CourtCalibrationResult? courtCalibration;
   final String? algorithm;
   final String? inferenceDevice;

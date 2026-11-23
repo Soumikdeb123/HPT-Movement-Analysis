@@ -12,6 +12,7 @@ from statistics import median
 from math import isfinite
 from typing import Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 
+from .active_play import detect_active_play, samples_in_intervals
 from .court_geometry import CourtCalibration, CourtDetector
 from .kinematics import (
     MINIMUM_CALIBRATION_CONFIDENCE,
@@ -40,6 +41,7 @@ class TrackingEngine(Protocol):
         cancellation_callback: CancellationCallback,
         target_player: str,
         athlete_mass_kg: Optional[float],
+        court_corners: Optional[Sequence[Sequence[float]]] = None,
     ) -> Dict:
         """Analyse a video and return a JSON-serialisable dictionary."""
 
@@ -202,6 +204,39 @@ def select_primary_tracks(
     return eligible[:maximum_players]
 
 
+def merge_target_track_segments(tracks: Sequence[Track]) -> Optional[Track]:
+    """Combine non-overlapping fragments of the already-selected athlete.
+
+    Only one target-side athlete is retained per frame. A long occlusion can
+    nevertheless create a new tracker ID; reporting only the longest ID then
+    discards valid observations. Original frame numbers are preserved so
+    downstream kinematics sees every gap and never invents movement within it.
+    """
+
+    ordered = sorted(
+        (track for track in tracks if track.image_trajectory),
+        key=lambda track: track.image_trajectory[0][0],
+    )
+    if not ordered:
+        return None
+    merged = Track(track_id=ordered[0].track_id, colour=ordered[0].colour)
+    last_frame = -1
+    for track in ordered:
+        first_frame = track.image_trajectory[0][0]
+        if first_frame <= last_frame:
+            # Overlapping target IDs are ambiguous; keep the earlier, longer
+            # fragment instead of silently combining two people.
+            continue
+        merged.image_trajectory.extend(track.image_trajectory)
+        merged.court_trajectory.extend(track.court_trajectory)
+        merged.association_trajectory.extend(track.association_trajectory)
+        merged.bbox_history.update(track.bbox_history)
+        merged.latest_bbox = track.latest_bbox
+        merged.missed_frames = track.missed_frames
+        last_frame = track.image_trajectory[-1][0]
+    return merged
+
+
 class YuchenPrototypeTrackingEngine:
     """Service adapter that executes the team's player-tracking approach."""
 
@@ -277,6 +312,7 @@ class YuchenPrototypeTrackingEngine:
         cancellation_callback: CancellationCallback,
         target_player: str,
         athlete_mass_kg: Optional[float],
+        court_corners: Optional[Sequence[Sequence[float]]] = None,
     ) -> Dict:
         try:
             import cv2
@@ -312,7 +348,14 @@ class YuchenPrototypeTrackingEngine:
             has_sample, sample = capture.read()
             if has_sample:
                 calibration_frames.append(sample)
-        calibration_candidate = CourtDetector().detect_from_frames(calibration_frames)
+        court_detector = CourtDetector()
+        calibration_candidate = (
+            court_detector.calibration_from_normalized_corners(
+                court_corners, (height, width, 3)
+            )
+            if court_corners is not None
+            else court_detector.detect_from_frames(calibration_frames)
+        )
         calibration = (
             calibration_candidate
             if calibration_candidate is not None
@@ -358,7 +401,13 @@ class YuchenPrototypeTrackingEngine:
                     verbose=False,
                     device=self._device_argument,
                     classes=[0],
-                    conf=self.confidence_threshold,
+                    # Court-space filtering removes most false positives, so a
+                    # lower threshold can recover small far-court athletes.
+                    conf=(
+                        min(self.confidence_threshold, 0.35)
+                        if calibration is not None
+                        else self.confidence_threshold
+                    ),
                     imgsz=min(640, ((max(width, height)+31)//32)*32),
                 )
                 for result in inference_results:
@@ -401,19 +450,52 @@ class YuchenPrototypeTrackingEngine:
             self.minimum_track_frames,
             min(int(fps * 2), max(5, int(frame_number * 0.02))),
         )
-        primary_tracks = select_primary_tracks(
+        eligible_tracks = select_primary_tracks(
             list(tracker.tracks.values()),
             minimum_frames=minimum_report_frames,
-            maximum_players=self.maximum_players,
+            maximum_players=max(self.maximum_players, len(tracker.tracks)),
         )
+        if self.maximum_players == 1:
+            merged_track = merge_target_track_segments(eligible_tracks)
+            primary_tracks = [merged_track] if merged_track is not None else []
+        else:
+            primary_tracks = eligible_tracks[: self.maximum_players]
 
+        active_play = detect_active_play(
+            primary_tracks[0].court_trajectory
+            if primary_tracks and calibration is not None
+            else [],
+            fps,
+            frame_number,
+        )
+        active_intervals = active_play.intervals
         players = []
         for track in primary_tracks:
+            court_trajectory = (
+                samples_in_intervals(track.court_trajectory, active_intervals)
+                if active_intervals
+                else track.court_trajectory
+            )
+            usable_position_count = (
+                len(court_trajectory)
+                if calibration is not None
+                else len(track.image_trajectory)
+            )
+            coverage_frame_count = (
+                active_play.active_frames
+                if calibration is not None and active_play.active_frames > 0
+                else frame_number
+            )
+            tracking_coverage = (
+                usable_position_count / coverage_frame_count
+                if coverage_frame_count else 0.0
+            )
             motion = analyse_metric_motion(
-                track.court_trajectory if calibration is not None else [],
+                court_trajectory if calibration is not None else [],
                 fps,
                 athlete_mass_kg,
                 calibration.confidence if calibration is not None else 0.0,
+                tracking_coverage=tracking_coverage,
             )
             court_metrics = motion["metrics"]
             force_velocity = motion["forceVelocity"]
@@ -426,11 +508,47 @@ class YuchenPrototypeTrackingEngine:
             # Reliable court mapping makes metre values the product-facing
             # result. Pixel metrics stay in the JSON as a transparent fallback
             # and for diagnosis, never relabelled as real-world units.
-            metrics = court_metrics if court_metrics is not None else image_metrics
+            unavailable_note = (
+                "A metre-based report was withheld because court mapping or "
+                "player tracking did not pass the quality checks."
+            )
+            unavailable_metric = {
+                "status": "unavailable", "value": None, "unit": None,
+                "note": unavailable_note,
+            }
+            metrics = court_metrics if court_metrics is not None else {
+                "movementPath": {
+                    "status": "unavailable", "coordinateSystem": "unavailable",
+                    "points": [], "note": unavailable_note,
+                },
+                "totalDistance": dict(unavailable_metric),
+                "leftRightDistance": dict(unavailable_metric),
+                "forwardBackDistance": dict(unavailable_metric),
+                "speed": {
+                    "status": "unavailable", "average": None, "peak": None,
+                    "unit": None, "samples": [], "note": unavailable_note,
+                },
+                "acceleration": {**unavailable_metric, "samples": []},
+                "deceleration": {**unavailable_metric, "samples": [], "events": []},
+                "directionChanges": {
+                    "status": "unavailable", "count": None, "events": [],
+                    "note": unavailable_note,
+                },
+                "overallEffort": dict(unavailable_metric),
+                "coverage": {
+                    "validDurationSeconds": 0.0, "retainedSamples": 0,
+                    "excludedSamples": len(track.image_trajectory), "note": unavailable_note,
+                },
+            }
+            quality_status = force_velocity.get("quality", {}).get("status", "unavailable")
             players.append(
                 {
                     "trackId": str(track.track_id),
-                    "trackedFrames": len(track.image_trajectory),
+                    "trackedFrames": usable_position_count,
+                    "detectedFrames": len(track.image_trajectory),
+                    "coverageFrameCount": coverage_frame_count,
+                    "trackingCoverage": round(tracking_coverage, 3),
+                    "qualityStatus": quality_status,
                     **metrics,
                     "courtMetrics": court_metrics,
                     "pixelMetrics": image_metrics,
@@ -450,7 +568,9 @@ class YuchenPrototypeTrackingEngine:
                 continue
             motion = analyse_metric_motion(
                 track.court_trajectory if calibration is not None else [], fps,
-                athlete_mass_kg, calibration.confidence if calibration else 0.)
+                athlete_mass_kg, calibration.confidence if calibration else 0.,
+                tracking_coverage=(len(track.court_trajectory) / frame_number
+                                   if frame_number else 0.))
             video_players.append({'trackId': str(track.track_id), **(motion['metrics'] or {})})
         render_video(input_path, output_video, video_tracks, video_players, calibration,
                      fps, width, height, frame_number, cancellation_callback,
@@ -464,8 +584,12 @@ class YuchenPrototypeTrackingEngine:
             "Automatic calibration confidence measures repeatability, not verified distance accuracy. Check against a known court distance.",
             "Distance uses a nine-detection moving average; kinematics use median/Savitzky-Golay filtering. Their sample coverage differs.",
         ]
-        if len(tracker.tracks) > 1:
-            warnings.append(f"Identity continuity warning: {len(tracker.tracks)} separate track segments were created. Only the most persistent eligible segment is reported; separate IDs are not automatically merged.")
+        if len(eligible_tracks) > 1 and self.maximum_players == 1:
+            warnings.append(
+                f"Identity continuity note: {len(eligible_tracks)} non-overlapping "
+                "target-athlete segments were combined. Time gaps remain excluded "
+                "from distance, speed and Force–Velocity calculations."
+            )
         if players:
             warnings.append(f"Reported track covers {players[0]['trackedFrames']} of {frame_number} frames. Missing detections are not proof of inactivity; this is not guaranteed to be a full-session total.")
         metric_results_available = bool(
@@ -497,7 +621,7 @@ class YuchenPrototypeTrackingEngine:
             warnings.append("No player track met the persistence threshold.")
 
         return {
-            "schemaVersion": 4,
+            "schemaVersion": 5,
             "algorithm": (
                 "HPT player movement analysis with experimental kinematics"
             ),
@@ -513,6 +637,7 @@ class YuchenPrototypeTrackingEngine:
                 "width": width,
                 "height": height,
             },
+            "activePlay": active_play.as_dict(fps, frame_number),
             "players": players,
             "annotatedVideoFilename": output_video.name,
             "warnings": warnings,
@@ -538,7 +663,9 @@ class YuchenPrototypeTrackingEngine:
                     detection
                     for detection in detections
                     if detection.court_position is not None
-                    and detection.court_position[1] >= centre_line - side_margin
+                    and centre_line - side_margin
+                    <= detection.court_position[1]
+                    <= calibration.length_metres + 4.0
                 ]
                 if not on_target_side:
                     return []
@@ -556,7 +683,9 @@ class YuchenPrototypeTrackingEngine:
                 detection
                 for detection in detections
                 if detection.court_position is not None
-                and detection.court_position[1] <= centre_line + side_margin
+                and -4.0
+                <= detection.court_position[1]
+                <= centre_line + side_margin
             ]
             if not on_target_side:
                 return []

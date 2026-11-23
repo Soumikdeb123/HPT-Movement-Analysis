@@ -18,8 +18,11 @@ class AnalysisJob:
     input_path: Path
     output_dir: Path
     original_filename: str
+    player_id: Optional[str]
+    player_name: Optional[str]
     target_player: str
     athlete_mass_kg: Optional[float]
+    court_corners: Optional[list]
     input_video: Dict
     owner: str = "local-test"
     created_at: str = field(default_factory=utc_now)
@@ -35,7 +38,9 @@ class AnalysisJob:
         return {
             "analysisId": self.job_id, "status": self.status,
             "progress": self.progress, "originalFilename": self.original_filename,
+            "playerId": self.player_id, "playerName": self.player_name,
             "targetPlayer": self.target_player, "athleteMassKg": self.athlete_mass_kg,
+            "courtCorners": self.court_corners,
             "inputVideo": dict(self.input_video), "result": self.result,
             "error": self.error, "createdAt": self.created_at,
             "completedAt": self.completed_at,
@@ -57,6 +62,9 @@ class AnalysisJob:
                     {"title": item["title"], "url": f"/api/analyses/{self.job_id}/reports/{item['filename']}"}
                     for item in result["reportImages"]]
                 result["reportArchiveUrl"] = f"/api/analyses/{self.job_id}/reports/reports.zip"
+            if result is not None and result.get("coachReportFilename"):
+                result["coachReportUrl"] = f"/api/analyses/{self.job_id}/reports/coach_report.pdf"
+                result.pop("coachReportFilename", None)
             data["result"] = result
             return data
 
@@ -77,8 +85,10 @@ class AnalysisJobManager:
         self.history = HistoryStore(self.runtime_dir)
 
     def create_job(self, input_path: Path, original_filename: str,
+                   player_id: str, player_name: str,
                    target_player: str, athlete_mass_kg: Optional[float],
-                   input_video: Dict, owner: str = "local-test") -> AnalysisJob:
+                   court_corners: Optional[list], input_video: Dict,
+                   owner: str = "local-test") -> AnalysisJob:
         job_id = uuid4().hex
         job_root = self.runtime_dir / job_id
         job_root.mkdir(parents=True, exist_ok=False)
@@ -88,8 +98,10 @@ class AnalysisJobManager:
             shutil.rmtree(input_path.parent, ignore_errors=True)
         job = AnalysisJob(job_id=job_id, input_path=managed_input_path,
                           output_dir=job_root / "results", original_filename=original_filename,
-                          target_player=target_player, athlete_mass_kg=athlete_mass_kg,
-                          input_video=dict(input_video), owner=owner)
+                           player_id=player_id, player_name=player_name,
+                           target_player=target_player, athlete_mass_kg=athlete_mass_kg,
+                           court_corners=court_corners,
+                           input_video=dict(input_video), owner=owner)
         try:
             self.history.save(job.record())
         except Exception:
@@ -114,8 +126,11 @@ class AnalysisJobManager:
         # Loaded completed records only need output_dir; the input is not reprocessed.
         return AnalysisJob(
             job_id=job_id, input_path=root / "input.mp4", output_dir=root / "results",
-            original_filename=record["originalFilename"], target_player=record["targetPlayer"],
-            athlete_mass_kg=record.get("athleteMassKg"), input_video=record["inputVideo"],
+            original_filename=record["originalFilename"],
+            player_id=record.get("playerId"), player_name=record.get("playerName"),
+            target_player=record["targetPlayer"],
+            athlete_mass_kg=record.get("athleteMassKg"),
+            court_corners=record.get("courtCorners"), input_video=record["inputVideo"],
             owner=record["owner"], created_at=record["createdAt"],
             completed_at=record.get("completedAt"), status=record["status"],
             progress=record["progress"], result=record.get("result"), error=record.get("error"))
@@ -168,9 +183,15 @@ class AnalysisJobManager:
                 input_path=job.input_path, output_dir=job.output_dir,
                 progress_callback=update_progress,
                 cancellation_callback=job.cancel_event.is_set,
-                target_player=job.target_player, athlete_mass_kg=job.athlete_mass_kg)
+                target_player=job.target_player, athlete_mass_kg=job.athlete_mass_kg,
+                court_corners=job.court_corners)
+            result["playerId"] = job.player_id
+            result["playerName"] = job.player_name
             if job.cancel_event.is_set():
                 raise AnalysisCancelled()
+            self.history.attach_force_velocity_baseline(
+                {**job._data(), "owner": job.owner, "result": result}
+            )
             save_reports(result, job.output_dir)
             if job.cancel_event.is_set():
                 raise AnalysisCancelled()
@@ -180,6 +201,7 @@ class AnalysisJobManager:
                     raise AnalysisCancelled()
                 record = {**job._data(), "owner": job.owner, "result": result,
                           "status": "completed", "progress": 1.0, "completedAt": utc_now()}
+                self.history.attach_force_velocity_baseline(record)
                 self.history.save(record)
                 job.result = result
                 job.progress = 1.0
