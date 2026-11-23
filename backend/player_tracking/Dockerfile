@@ -15,11 +15,11 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 COPY hpt_tracking ./hpt_tracking
-RUN python -c "from ultralytics import YOLO; YOLO('yolov8s.pt')"
+RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 RUN mkdir -p /app/runtime
 
 ENV HPT_RUNTIME_DIR=/app/runtime
-ENV HPT_YOLO_MODEL=/app/backend/player_tracking/yolov8s.pt
+ENV HPT_YOLO_MODEL=/app/backend/player_tracking/yolov8n.pt
 ENV HPT_INFERENCE_DEVICE=cpu
 ENV PYTHONUNBUFFERED=1
 
