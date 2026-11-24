@@ -1,4 +1,6 @@
-import 'package:file_picker/file_picker.dart';
+import 'dart:io';
+
+import 'package:image_picker/image_picker.dart';
 
 class SelectedVideo {
   const SelectedVideo({
@@ -21,19 +23,21 @@ class FilePickerAnalysisVideoPicker implements AnalysisVideoPicker {
 
   @override
   Future<SelectedVideo?> pickVideo() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['mp4', 'mov', 'avi', 'mkv'],
-      allowMultiple: false,
-      withData: false,
-    );
-    if (result == null) return null;
+    final picker = ImagePicker();
 
-    final file = result.files.single;
-    final path = file.path;
-    if (path == null || path.isEmpty) {
-      throw StateError('The selected video is not available as a local file.');
-    }
-    return SelectedVideo(path: path, name: file.name, sizeBytes: file.size);
+    final video = await picker.pickVideo(
+      source: ImageSource.gallery,
+    );
+
+    if (video == null) return null;
+
+    final file = File(video.path);
+    final sizeBytes = await file.length();
+
+    return SelectedVideo(
+      path: video.path,
+      name: video.name,
+      sizeBytes: sizeBytes,
+    );
   }
 }
