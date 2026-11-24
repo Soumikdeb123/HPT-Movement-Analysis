@@ -43,3 +43,26 @@ def test_short_gap_retains_id_long_gap_creates_separate_track():
     tracker.update(40, [d])
     assert len(tracker.tracks) == 2
     assert len(tracker.tracks[0].image_trajectory) == 2
+
+
+def test_near_player_fragments_can_be_identified_after_long_occlusion():
+    """A long disappearance currently creates two fragments for one athlete."""
+    tracker = YuchenCentroidTrackManager(3.0, 30)
+
+    first = Detection((0, 0, 2, 2), .9, (3.0, 18.0))
+    second = Detection((0, 0, 2, 2), .9, (3.2, 18.2))
+
+    tracker.update(0, [first])
+    tracker.update(5, [first])
+
+    # Longer than maximum_missed_frames: same athlete is assigned a new ID.
+    tracker.update(40, [second])
+    tracker.update(45, [second])
+
+    tracker.link_fragments(fps=30, maximum_gap_seconds=5.0)
+
+    assert len(tracker.tracks) == 1
+    track = tracker.tracks[0]
+
+    assert [sample[0] for sample in track.image_trajectory] == [0, 5, 40, 45]
+    assert [sample[0] for sample in track.court_trajectory] == [0, 5, 40, 45]

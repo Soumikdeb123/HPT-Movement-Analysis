@@ -184,6 +184,92 @@ class YuchenCentroidTrackManager:
             self._next_track_id += 1
 
 
+    def link_fragments(
+        self,
+        fps: float,
+        maximum_gap_seconds: float = 5.0,
+        maximum_speed_mps: float = 8.0,
+    ) -> None:
+        """Join sequential fragments that plausibly belong to one selected athlete."""
+
+        if fps <= 0 or len(self.tracks) < 2:
+            return
+
+        maximum_gap_frames = maximum_gap_seconds * fps
+
+        while True:
+            ordered = sorted(
+                self.tracks.values(),
+                key=lambda track: track.image_trajectory[0][0]
+                if track.image_trajectory
+                else float("inf"),
+            )
+
+            joined = False
+
+            for target in ordered:
+                if not target.image_trajectory:
+                    continue
+
+                target_end = target.image_trajectory[-1][0]
+
+                candidates = []
+                for piece in ordered:
+                    if piece.track_id == target.track_id or not piece.image_trajectory:
+                        continue
+
+                    piece_start = piece.image_trajectory[0][0]
+                    gap_frames = piece_start - target_end
+
+                    if gap_frames <= 0 or gap_frames > maximum_gap_frames:
+                        continue
+
+                    # When metric court positions exist on both fragments,
+                    # reject links requiring implausible player speed.
+                    if target.court_trajectory and piece.court_trajectory:
+                        _, tx, ty = target.court_trajectory[-1]
+                        _, px, py = piece.court_trajectory[0]
+
+                        distance = ((px - tx) ** 2 + (py - ty) ** 2) ** 0.5
+                        elapsed_seconds = gap_frames / fps
+
+                        if distance > maximum_speed_mps * elapsed_seconds + 1.0:
+                            continue
+
+                    candidates.append((gap_frames, piece))
+
+                if not candidates:
+                    continue
+
+                _, piece = min(
+                    candidates,
+                    key=lambda item: (
+                        item[0],
+                        -len(item[1].image_trajectory),
+                    ),
+                )
+
+                target.image_trajectory.extend(piece.image_trajectory)
+                target.court_trajectory.extend(piece.court_trajectory)
+                target.association_trajectory.extend(piece.association_trajectory)
+                target.bbox_history.update(piece.bbox_history)
+
+                target.image_trajectory.sort(key=lambda sample: sample[0])
+                target.court_trajectory.sort(key=lambda sample: sample[0])
+                target.association_trajectory.sort(key=lambda sample: sample[0])
+
+                target.latest_bbox = piece.latest_bbox
+                target.missed_frames = piece.missed_frames
+
+                self.tracks.pop(piece.track_id, None)
+
+                joined = True
+                break
+
+            if not joined:
+                break
+
+
 def select_primary_tracks(
     tracks: Sequence[Track], minimum_frames: int, maximum_players: int
 ) -> List[Track]:
@@ -406,6 +492,14 @@ class YuchenPrototypeTrackingEngine:
                     progress_callback(min(frame_number / total_frames * .8, .8))
         finally:
             capture.release()
+
+        # Rejoin plausible fragments of the selected athlete after long
+        # occlusions or temporary tracking loss before producing metrics.
+        tracker.link_fragments(
+            fps=fps,
+            maximum_gap_seconds=5.0,
+            maximum_speed_mps=8.0,
+        )
 
         minimum_report_frames = max(
             self.minimum_track_frames,
