@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from typing import List, Tuple, Optional, Dict
+import itertools
 import math
 
 class CourtDetector:
@@ -14,7 +15,12 @@ class CourtDetector:
             'doubles_width': 10.97,  # meters
             'doubles_length': 23.77   # meters
         }
-        
+        # How many of the strongest image lines are tried as lines across the
+        # court and along it. The net tape and fences also produce strong
+        # horizontal lines, so the real service lines can rank well down.
+        self.max_cross_lines = 20
+        self.max_length_lines = 12
+
     def line_intersection(self, line1: np.ndarray, line2: np.ndarray) -> Optional[Tuple[float, float]]:
         """
         Calculate intersection point of two lines
@@ -35,7 +41,7 @@ class CourtDetector:
         return (x, y)
 
     @staticmethod
-    def _white_line_mask(frame: np.ndarray) -> np.ndarray:
+    def _white_line_mask(frame: np.ndarray, contrast: int = 12) -> np.ndarray:
         """Binary mask of court-line pixels.
 
         Court lines are thin structures that are clearly whiter than the
@@ -43,6 +49,8 @@ class CourtDetector:
         only its contrast with the surroundings (morphological top-hat) is
         used, so it works on dark and light courts alike. A line next to a
         light-blue apron is barely brighter than it, but far less saturated.
+        ``contrast`` is kept low so faint lines in night footage still show;
+        the clutter this lets through is rejected by the court-model fit.
         """
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         saturation, value = hsv[..., 1], hsv[..., 2]
@@ -50,103 +58,242 @@ class CourtDetector:
         kernel_size = max(7, (frame.shape[0] // 40) | 1)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
         tophat = cv2.morphologyEx(whiteness, cv2.MORPH_TOPHAT, kernel)
-        return ((tophat > 25) & (saturation < 100)).astype(np.uint8) * 255
+        return ((tophat > contrast) & (saturation < 100)).astype(np.uint8) * 255
+
+    # Painted court lines a hypothesis can name, in metres. Lines across the
+    # court (constant y): far baseline, far service line, near service line,
+    # near baseline. Lines along it (constant x): doubles and singles
+    # sidelines. The centre service line (only spans the service boxes) and
+    # the net (raised off the ground) are not used to fix a hypothesis.
+    CROSS_LINES_M = (0.0, 5.485, 18.285, 23.77)
+    LENGTH_LINES_M = (0.0, 1.37, 9.6, 10.97)
 
     @staticmethod
-    def _x_at_y(line: Tuple[float, float, float, float], y: float) -> float:
-        x1, y1, x2, y2 = line
-        return x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+    def _line_from_points(x1: float, y1: float, x2: float, y2: float) -> np.ndarray:
+        """Normalised (a, b, c) with a*x + b*y + c = 0."""
+        a, b = y1 - y2, x2 - x1
+        norm = math.hypot(a, b)
+        return np.array([a, b, x1 * y2 - x2 * y1]) / norm
 
-    def _sideline_candidates(self, mask: np.ndarray, max_per_side: int = 12):
-        """Slanted line candidates for the left/right sidelines, strongest first.
+    @staticmethod
+    def _intersect(l1: np.ndarray, l2: np.ndarray) -> Optional[Tuple[float, float]]:
+        p = np.cross(l1, l2)
+        if abs(p[2]) < 1e-9:
+            return None
+        return p[0] / p[2], p[1] / p[2]
 
-        Each entry is (x1, y1, x2, y2). Segments lying on the same line are
-        grouped and the groups ranked by total length: sidelines are long,
-        continuous lines, while seats, boards and roof beams tend to be
-        broken into short pieces.
+    def _line_candidates(self, mask: np.ndarray, max_lines: int = 24) -> List[Dict]:
+        """Long straight lines in the mask, strongest (most supporting length) first.
+
+        Hough segments lying on the same line are merged; each merged line is
+        refitted through all its segments. Every entry has ``line`` (a, b, c),
+        ``tilt`` (degrees from horizontal) and ``length`` (total segment length).
         """
         height, width = mask.shape[:2]
-        min_length = max(30, int(0.15 * height))
-        lines = cv2.HoughLinesP(mask, 1, np.pi / 180, threshold=40,
-                                minLineLength=min_length, maxLineGap=10)
-        if lines is None:
-            return [], []
+        segments = cv2.HoughLinesP(mask, 1, np.pi / 180, threshold=30,
+                                   minLineLength=max(25, int(0.08 * height)), maxLineGap=8)
+        if segments is None:
+            return []
+        segments = segments[:, 0].astype(np.float64)
+        lengths = np.hypot(segments[:, 2] - segments[:, 0], segments[:, 3] - segments[:, 1])
+        tolerance = 0.006 * math.hypot(width, height) + 2.0
 
-        left_candidates, right_candidates = [], []
-        for x1, y1, x2, y2 in lines[:, 0].astype(np.float64):
-            if y1 == y2:
-                continue
+        groups = []
+        for (x1, y1, x2, y2), length in sorted(zip(segments, lengths), key=lambda s: -s[1]):
             angle = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180
-            # In a behind-the-baseline view the sidelines slant towards a
-            # vanishing point above the court. Near-vertical lines (overlay
-            # borders, posts) and near-horizontal lines are not sidelines.
-            if 15 <= angle <= 75:
-                right_candidates.append((x1, y1, x2, y2))
-            elif 105 <= angle <= 165:
-                left_candidates.append((x1, y1, x2, y2))
+            mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+            for group in groups:
+                difference = abs(group['angle'] - angle)
+                a, b, c = group['seed']
+                if min(difference, 180 - difference) <= 2.0 and abs(a * mx + b * my + c) <= tolerance:
+                    group['length'] += length
+                    group['segments'].append((x1, y1, x2, y2))
+                    break
+            else:
+                groups.append({'angle': angle, 'seed': self._line_from_points(x1, y1, x2, y2),
+                               'length': length, 'segments': [(x1, y1, x2, y2)]})
 
-        reference_y = height - 1
-
-        def strongest_lines(candidates):
-            groups = []  # [x at reference_y, angle, total length, longest segment]
-            for line in candidates:
-                x1, y1, x2, y2 = line
-                x = self._x_at_y(line, reference_y)
-                angle = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180
-                length = math.hypot(x2 - x1, y2 - y1)
-                for group in groups:
-                    if abs(group[0] - x) <= 0.02 * width and abs(group[1] - angle) <= 3:
-                        group[2] += length
-                        if length > math.hypot(group[3][2] - group[3][0], group[3][3] - group[3][1]):
-                            group[3] = line
-                        break
-                else:
-                    groups.append([x, angle, length, line])
-            groups.sort(key=lambda g: -g[2])
-            return [g[3] for g in groups[:max_per_side]]
-
-        return strongest_lines(left_candidates), strongest_lines(right_candidates)
+        groups.sort(key=lambda g: -g['length'])
+        candidates = []
+        for group in groups[:max_lines]:
+            points = []
+            for x1, y1, x2, y2 in group['segments']:
+                n = max(2, int(math.hypot(x2 - x1, y2 - y1) / 3))
+                points.append(np.column_stack([np.linspace(x1, x2, n), np.linspace(y1, y2, n)]))
+            vx, vy, x0, y0 = cv2.fitLine(np.vstack(points).astype(np.float32),
+                                         cv2.DIST_HUBER, 0, 0.01, 0.01).ravel()
+            line = np.array([-vy, vx, vy * x0 - vx * y0], dtype=np.float64)
+            angle = math.degrees(math.atan2(vy, vx)) % 180
+            candidates.append({'line': line, 'tilt': min(angle, 180 - angle), 'length': group['length']})
+        return candidates
 
     def detect_court_corners_perspective(self, frame: np.ndarray) -> Optional[np.ndarray]:
-        """Detect the four doubles-court corners in a behind-the-baseline view.
+        """Detect the four doubles-court corners in a view from behind a baseline.
 
-        1. Hough lines on a white-pixel mask give the outermost slanted lines,
-           which are the doubles sidelines.
-        2. Scanning rows between those sidelines upwards from the bottom, the
-           first almost fully white row is the near baseline and the next
-           mostly white row is the near service line.
-        3. Those four line intersections fix a homography; the far corners
-           are extrapolated from it. The far baseline itself is often too
-           small and blurry to detect directly.
-        Other slanted lines (a roof frame, advertising boards, a neighbouring
-        court) can look like sidelines, so every candidate pair is tried and
-        each resulting court is scored by how well the full court-line model
-        projected through it lines up with the detected line pixels.
-        Returns corners ordered top-left, top-right, bottom-right, bottom-left,
-        or None if no plausible court is found.
+        Returns corners ordered far-left, far-right, near-right, near-left
+        (image coordinates; corners outside the frame are allowed), or None.
         """
         return self.detect_court_with_score(frame)[0]
 
     def detect_court_with_score(self, frame: np.ndarray) -> Tuple[Optional[np.ndarray], int]:
-        """Like detect_court_corners_perspective, also returning the model score.
+        """Fit a tennis-court model to the white lines in ``frame``.
 
-        The score is the number of court-line pixels the fit explains; use it
-        to compare detections of the same video, e.g. across frames.
+        1. Long straight lines are found in a white-pixel mask.
+        2. Every choice of two flatter lines (across the court) and two
+           steeper lines (along it) is a candidate; each such quadrilateral is
+           tried as every pairing of named court lines (baseline/service line,
+           doubles/singles sideline). That covers cameras off to one side and
+           views where the near baseline or a sideline is out of frame.
+        3. Each hypothesis projects the full court-line model into the image;
+           the one whose lines land best on the white pixels wins.
+        The score is the number of court-line pixels the fit explains, so it
+        can be compared across frames of the same video.
         """
+        height, width = frame.shape[:2]
         mask = self._white_line_mask(frame)
-        support = cv2.dilate(mask, np.ones((3, 3), np.uint8))
-        left_candidates, right_candidates = self._sideline_candidates(mask)
-        best_corners, best_score = None, 0
-        for left in left_candidates:
-            for right in right_candidates:
-                corners = self._corners_from_sidelines(mask, left, right)
-                if corners is None:
+        support = cv2.dilate(mask, np.ones((3, 3), np.uint8)) > 0
+        lines = self._line_candidates(mask)
+        flat = [l for l in lines if l['tilt'] <= 30][:self.max_cross_lines]
+        steep = [l for l in lines if l['tilt'] >= 10][:self.max_length_lines]
+        if len(flat) < 2 or len(steep) < 2:
+            return None, 0
+
+        # Every (upper, lower) cross-line pair times every (left, right) length-line pair.
+        names = [(ya, yb, xa, xb)
+                 for i, ya in enumerate(self.CROSS_LINES_M) for yb in self.CROSS_LINES_M[i + 1:]
+                 for j, xa in enumerate(self.LENGTH_LINES_M) for xb in self.LENGTH_LINES_M[j + 1:]]
+        names_arr = np.array(names)
+        coarse = self._court_model_points(step_m=0.3)
+        # Model points in each hypothesis' unit square (0..1 between its four lines).
+        U = (coarse[None, :, 0] - names_arr[:, 2:3]) / (names_arr[:, 3:4] - names_arr[:, 2:3])
+        V = (coarse[None, :, 1] - names_arr[:, 0:1]) / (names_arr[:, 1:2] - names_arr[:, 0:1])
+        # The two near corners of the doubles court, same parametrisation.
+        near = np.array([[0.0, self.court_dimensions['doubles_length']],
+                         [self.court_dimensions['doubles_width'], self.court_dimensions['doubles_length']]])
+        NU = (near[None, :, 0] - names_arr[:, 2:3]) / (names_arr[:, 3:4] - names_arr[:, 2:3])
+        NV = (near[None, :, 1] - names_arr[:, 0:1]) / (names_arr[:, 1:2] - names_arr[:, 0:1])
+        unit = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float32)
+        centre_x = width / 2.0
+
+        def y_at_centre(line):
+            a, b, c = line
+            return -(a * centre_x + c) / b if abs(b) > 1e-9 else float('inf')
+
+        shortlist = []  # (coarse score, unit-square homography, hypothesis index)
+        for h1, h2 in itertools.combinations(flat, 2):
+            upper, lower = (h1, h2) if y_at_centre(h1['line']) < y_at_centre(h2['line']) else (h2, h1)
+            for v1, v2 in itertools.combinations(steep, 2):
+                if max(h1['tilt'], h2['tilt']) >= min(v1['tilt'], v2['tilt']):
                     continue
-                matched, fraction = self._court_model_score(support, corners)
-                # Below half, most of the predicted court lines are not there.
-                if fraction >= 0.5 and matched > best_score:
-                    best_corners, best_score = corners, matched
-        return best_corners, best_score
+                points = [self._intersect(upper['line'], v1['line']), self._intersect(upper['line'], v2['line']),
+                          self._intersect(lower['line'], v2['line']), self._intersect(lower['line'], v1['line'])]
+                if any(p is None for p in points):
+                    continue
+                ul, ur, lr, ll = points
+                if ul[0] > ur[0]:
+                    ul, ur, lr, ll = ur, ul, ll, lr
+                if not (ur[0] - ul[0] > 2 and lr[0] - ll[0] > 2 and ll[1] > ul[1] and lr[1] > ur[1]):
+                    continue
+                # Seen from behind a baseline the far end looks narrower.
+                if lr[0] - ll[0] < 0.9 * (ur[0] - ul[0]):
+                    continue
+                quad = np.array([ul, ur, lr, ll], dtype=np.float64)
+                if (quad[:, 0].min() < -2 * width or quad[:, 0].max() > 3 * width or
+                        quad[:, 1].min() < -2 * height or quad[:, 1].max() > 3 * height):
+                    continue
+                try:
+                    Hq = cv2.getPerspectiveTransform(unit, quad.astype(np.float32))
+                except cv2.error:
+                    continue
+                Z = Hq[2, 0] * U + Hq[2, 1] * V + Hq[2, 2]
+                # The whole court must be in front of the camera.
+                valid = np.all(Z > 1e-9, axis=1) | np.all(Z < -1e-9, axis=1)
+                if not valid.any():
+                    continue
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    X = (Hq[0, 0] * U + Hq[0, 1] * V + Hq[0, 2]) / Z
+                    Y = (Hq[1, 0] * U + Hq[1, 1] * V + Hq[1, 2]) / Z
+                inside = valid[:, None] & (X >= 0) & (X < width) & (Y >= 0) & (Y < height)
+                xs = np.where(inside, X, 0).astype(np.int64)
+                ys = np.where(inside, Y, 0).astype(np.int64)
+                hits = inside & support[ys, xs]
+                n_inside, n_hits = inside.sum(axis=1), hits.sum(axis=1)
+                # The camera stands behind the near baseline, so that baseline is
+                # wide in the image and in its lower half (or below the frame).
+                # This rules out small fits on stands, fences and the net.
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    Zn = Hq[2, 0] * NU + Hq[2, 1] * NV + Hq[2, 2]
+                    Xn = (Hq[0, 0] * NU + Hq[0, 1] * NV + Hq[0, 2]) / Zn
+                    Yn = (Hq[1, 0] * NU + Hq[1, 1] * NV + Hq[1, 2]) / Zn
+                plausible = (Yn.mean(axis=1) >= 0.6 * height) & (np.abs(Xn[:, 1] - Xn[:, 0]) >= 0.4 * width)
+                ok = (n_inside >= 0.3 * coarse.shape[0]) & (n_hits >= 0.5 * n_inside) & plausible
+                for k in np.nonzero(ok)[0]:
+                    shortlist.append((n_hits[k] - 0.5 * (n_inside[k] - n_hits[k]), Hq, k))
+
+        if not shortlist:
+            return None, 0
+        shortlist.sort(key=lambda s: -s[0])
+        best, best_score, best_value = None, 0, -np.inf
+        for _, Hq, k in shortlist[:300]:
+            ya, yb, xa, xb = names[k]
+            to_unit = np.array([[1 / (xb - xa), 0, -xa / (xb - xa)],
+                                [0, 1 / (yb - ya), -ya / (yb - ya)],
+                                [0, 0, 1]])
+            court_to_image = Hq @ to_unit
+            matched, total = self._court_model_score(support, court_to_image)
+            value = matched - 0.5 * (total - matched)
+            if total and matched >= 0.5 * total and value > best_value:
+                best, best_score, best_value = court_to_image, matched, value
+        if best is None:
+            return None, 0
+
+        refined = self._refine_fit(mask, best)
+        if refined is not None:
+            matched, total = self._court_model_score(support, refined)
+            if total and matched >= best_score:
+                best, best_score = refined, matched
+
+        court = np.array([[0, 0], [self.court_dimensions['doubles_width'], 0],
+                          [self.court_dimensions['doubles_width'], self.court_dimensions['doubles_length']],
+                          [0, self.court_dimensions['doubles_length']]], dtype=np.float64)
+        corners = cv2.perspectiveTransform(court.reshape(-1, 1, 2), best).reshape(-1, 2)
+        if not np.all(np.isfinite(corners)):
+            return None, 0
+        return np.round(corners).astype(np.int32), int(best_score)
+
+    def _refine_fit(self, mask: np.ndarray, court_to_image: np.ndarray) -> Optional[np.ndarray]:
+        """Pull the projected court lines onto the nearest white-line pixels.
+
+        The hypothesis is fixed by only four lines, so the other lines can sit
+        a few pixels off. Each pass pairs every projected model point with the
+        nearest line pixel within a shrinking radius and re-solves the
+        homography robustly from all those pairs.
+        """
+        height, width = mask.shape[:2]
+        if not mask.any():
+            return None
+        # Distance to, and position of, the nearest line pixel for every pixel.
+        not_line = (mask == 0).astype(np.uint8)
+        distance, labels = cv2.distanceTransformWithLabels(
+            not_line, cv2.DIST_L2, 5, labelType=cv2.DIST_LABEL_PIXEL)
+        line_ys, line_xs = np.nonzero(not_line == 0)  # label k is the k-th line pixel in row order
+        model = self._court_model_points(step_m=0.1)
+        H = court_to_image
+        for radius in (8.0, 6.0, 4.0, 3.0):
+            projected = cv2.perspectiveTransform(model.reshape(-1, 1, 2), H).reshape(-1, 2)
+            xs, ys = np.round(projected[:, 0]), np.round(projected[:, 1])
+            inside = np.isfinite(xs) & np.isfinite(ys) & (xs >= 0) & (xs < width) & (ys >= 0) & (ys < height)
+            xi, yi = xs[inside].astype(int), ys[inside].astype(int)
+            near = distance[yi, xi] <= radius
+            if near.sum() < 50:
+                return None
+            label = labels[yi[near], xi[near]] - 1
+            targets = np.column_stack([line_xs[label], line_ys[label]]).astype(np.float64)
+            H_new, _ = cv2.findHomography(model[inside][near], targets, cv2.RANSAC, 2.0)
+            if H_new is None or not np.all(np.isfinite(H_new)):
+                return None
+            H = H_new
+        return H
 
     def _court_model_points(self, step_m: float = 0.1) -> np.ndarray:
         """Points (metres) sampled along every line of a tennis court."""
@@ -169,138 +316,19 @@ class CourtDetector:
             points.append(np.column_stack([np.linspace(x1, x2, n), np.linspace(y1, y2, n)]))
         return np.vstack(points)
 
-    def _court_model_score(self, support: np.ndarray, corners: np.ndarray) -> Tuple[int, float]:
-        """How well the projected court-line model lands on detected line pixels.
-
-        Returns (matched, fraction): the number of distinct image pixels of the
-        projected model that fall on line pixels, and the fraction that do.
-        The count is what ranks candidates: a fit squeezed into a small,
-        cluttered area (net, back wall) can hit a high fraction while
-        covering only a few pixels.
-        """
-        width = float(self.court_dimensions['doubles_width'])
-        length = float(self.court_dimensions['doubles_length'])
-        court_rect = np.array([[0, 0], [width, 0], [width, length], [0, length]], dtype=np.float32)
-        court_to_image = cv2.getPerspectiveTransform(court_rect, corners.astype(np.float32))
+    def _court_model_score(self, support: np.ndarray, court_to_image: np.ndarray) -> Tuple[int, int]:
+        """Distinct in-frame pixels of the projected court-line model: (on a white line, total)."""
         projected = cv2.perspectiveTransform(
             self._court_model_points().reshape(-1, 1, 2), court_to_image).reshape(-1, 2)
-        height, image_width = support.shape[:2]
-        xs, ys = np.round(projected[:, 0]).astype(int), np.round(projected[:, 1]).astype(int)
-        inside = (xs >= 0) & (xs < image_width) & (ys >= 0) & (ys < height)
-        # Most of the court must be in view.
-        if inside.mean() < 0.6:
-            return 0, 0.0
-        pixels = np.unique(ys[inside] * image_width + xs[inside])
-        matched = int(np.count_nonzero(support.reshape(-1)[pixels]))
-        return matched, matched / len(pixels)
-
-    def _corners_from_sidelines(self, mask: np.ndarray, left, right) -> Optional[np.ndarray]:
-        """Find the baselines between two candidate sidelines and return the court corners."""
-        height, width = mask.shape[:2]
-
-        # Vanishing point of the two sidelines; baselines must lie below it.
-        def as_homogeneous(line):
-            x1, y1, x2, y2 = line
-            return np.cross([x1, y1, 1.0], [x2, y2, 1.0])
-
-        vanishing = np.cross(as_homogeneous(left), as_homogeneous(right))
-        if abs(vanishing[2]) < 1e-9:
-            return None
-        vanishing_y = vanishing[1] / vanishing[2]
-        if vanishing_y >= height:
-            return None
-
-        # A column "hits" a row when it has a white pixel within +/-band rows,
-        # which tolerates slightly tilted baselines.
-        band = 3
-        dilated = cv2.dilate(mask, np.ones((2 * band + 1, 1), np.uint8))
-        start_y = max(0, int(math.ceil(vanishing_y)) + 5)
-        row_fill = {}
-        for y in range(start_y, height):
-            x0 = max(0, int(round(self._x_at_y(left, y) + 3)))
-            x1 = min(width, int(round(self._x_at_y(right, y) - 3)) + 1)
-            if x1 - x0 < 20:
-                continue
-            row_fill[y] = np.count_nonzero(dilated[y, x0:x1]) / float(x1 - x0)
-        if not row_fill:
-            return None
-
-        def first_band_upwards(below_y: int, threshold: float):
-            """Rows of the first white band above ``below_y`` with fill >= threshold."""
-            rows = []
-            for y in range(below_y - 1, start_y - 1, -1):
-                if row_fill.get(y, 0.0) >= threshold:
-                    rows.append(y)
-                elif rows:
-                    break
-            return rows
-
-        # The baseline spans the full doubles width; the service line spans
-        # only the singles court (~75% of it), hence the lower threshold.
-        near_rows = first_band_upwards(height, 0.85)
-        if not near_rows:
-            return None
-        # Step past the blurred upper edge of the baseline before searching.
-        above_baseline = min(near_rows)
-        while above_baseline > start_y and row_fill.get(above_baseline, 0.0) >= 0.3:
-            above_baseline -= 1
-        service_rows = first_band_upwards(above_baseline, 0.5)
-        if not service_rows:
-            return None
-
-        def refine_line(row: int):
-            """Fit a line through the white pixels of the horizontal line near ``row``."""
-            ys, xs = [], []
-            for y in range(max(0, row - band - 2), min(height, row + band + 3)):
-                x0 = max(0, int(round(self._x_at_y(left, y) + 3)))
-                x1 = min(width, int(round(self._x_at_y(right, y) - 2)))
-                cols = np.nonzero(mask[y, x0:x1])[0]
-                xs.extend((cols + x0).tolist())
-                ys.extend([y] * len(cols))
-            if len(xs) < 10:
-                return (0.0, float(row), float(width), float(row))
-            vx, vy, cx, cy = cv2.fitLine(np.column_stack([xs, ys]).astype(np.float32),
-                                         cv2.DIST_HUBER, 0, 0.01, 0.01).ravel()
-            return (float(cx - vx * width), float(cy - vy * width),
-                    float(cx + vx * width), float(cy + vy * width))
-
-        near_line = refine_line(int(np.mean(near_rows)))
-        service_line = refine_line(int(np.mean(service_rows)))
-
-        image_points = []
-        for cross_line, sideline in ((service_line, left), (service_line, right),
-                                     (near_line, right), (near_line, left)):
-            point = self.line_intersection(cross_line, sideline)
-            if point is None:
-                return None
-            image_points.append(point)
-
-        court_width = float(self.court_dimensions['doubles_width'])
-        court_length = float(self.court_dimensions['doubles_length'])
-        service_y = court_length / 2.0 + 6.40  # net to service line is 6.40 m
-        court_points = np.array([
-            [0.0, service_y], [court_width, service_y],
-            [court_width, court_length], [0.0, court_length],
-        ], dtype=np.float32)
-        try:
-            image_to_court = cv2.getPerspectiveTransform(
-                np.array(image_points, dtype=np.float32), court_points)
-            court_to_image = np.linalg.inv(image_to_court)
-        except (cv2.error, np.linalg.LinAlgError):
-            return None
-
-        far_corners = cv2.perspectiveTransform(
-            np.array([[[0.0, 0.0], [court_width, 0.0]]], dtype=np.float64), court_to_image)[0]
-        corners = np.array([far_corners[0], far_corners[1],
-                            image_points[2], image_points[3]], dtype=np.float32)
-        if not np.all(np.isfinite(corners)):
-            return None
-
-        top_width = corners[1, 0] - corners[0, 0]
-        bottom_width = corners[2, 0] - corners[3, 0]
-        if corners[3, 1] - corners[0, 1] < 0.1 * height or top_width <= 0 or bottom_width < top_width:
-            return None
-        return np.round(corners).astype(np.int32)
+        height, width = support.shape[:2]
+        finite = np.all(np.isfinite(projected), axis=1)
+        projected = projected[finite]
+        xs, ys = np.round(projected[:, 0]), np.round(projected[:, 1])
+        inside = (xs >= 0) & (xs < width) & (ys >= 0) & (ys < height)
+        if inside.sum() < 0.3 * len(finite):
+            return 0, 0
+        pixels = np.unique(ys[inside].astype(np.int64) * width + xs[inside].astype(np.int64))
+        return int(np.count_nonzero(support.reshape(-1)[pixels])), int(len(pixels))
     
     def draw_court_analysis(self, frame: np.ndarray, corners: np.ndarray, 
                            lines: np.ndarray = None) -> np.ndarray:

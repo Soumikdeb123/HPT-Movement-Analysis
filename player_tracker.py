@@ -100,6 +100,14 @@ class PlayerTracker:
         self.cod_min_interval_s = 0.5  # one turn is not counted twice
         self.removed_tracks: Dict[int, PlayerTrack] = {}
         self.inference_size = 640  # set per video; never upscale small videos
+        # The near-end player (the one on the camera's side of the net). Their
+        # track can break into pieces when they are hidden or leave the frame;
+        # pieces up to this far apart in time are joined into one.
+        self.near_player_id: Optional[int] = None
+        self.near_link_max_gap_s = 5.0
+        self.frame_height: Optional[int] = None  # set per video
+        self.near_link_max_speed_mps = 8.0  # average speed allowed across a gap
+        self.near_court_x_margin_m = 2.0  # wider than this off the court: another court or a spectator
 
     def set_calibration(
         self,
@@ -148,14 +156,20 @@ class PlayerTracker:
         boxes = self.model(frame, verbose=False, classes=[0], conf=confidence_threshold,
                            imgsz=self.inference_size)[0].boxes
         detections: List[PlayerDetection] = []
+        frame_height, frame_width = frame.shape[:2]
         for (x1, y1, x2, y2), confidence in zip(boxes.xyxy.cpu().numpy().tolist(),
                                                 boxes.conf.cpu().numpy().tolist()):
             ground_point = ((x1 + x2) / 2.0, y2)
+            # A box cut off by the edge of the frame ends at the edge, not at
+            # the feet (bottom) or the body's centre line (sides), so its
+            # court position would be wrong. Such frames are tracked in pixels
+            # only and the trajectory is interpolated across them.
+            feet_visible = y2 < frame_height - 2 and x1 > 1 and x2 < frame_width - 2
             detections.append(PlayerDetection(
                 bbox=[x1, y1, x2, y2],
                 ground_point=ground_point,
                 confidence=confidence,
-                court_point=self.pixel_to_court(ground_point),
+                court_point=self.pixel_to_court(ground_point) if feet_visible else None,
             ))
         return detections
 
@@ -334,7 +348,9 @@ class PlayerTracker:
         window = max(5, int(round(self.kinematics_window_s * self.fps)) | 1)
         # Near a segment's ends the filter extrapolates rather than smooths,
         # which shows up as fake deceleration spikes; drop those frames.
-        edge = window // 2
+        # Acceleration is filtered from speed, which is itself filtered, so
+        # both filters' edges must go: two half-windows at each end.
+        edge = 2 * (window // 2)
 
         for track in list(self.tracks.values()) + list(self.removed_tracks.values()):
             speed_by_frame: Dict[int, float] = {}
@@ -533,8 +549,11 @@ class PlayerTracker:
 
     def get_track_statistics(self) -> Dict[int, Dict]:
         stats: Dict[int, Dict] = {}
+        # Flickers shorter than half a second (spectators, false detections)
+        # are not reported as players.
+        min_detections = max(2, int(0.5 * self.fps)) if self.fps else 2
         for track_id, track in self.tracks.items():
-            if track.num_detections_total < 2:
+            if track.num_detections_total < min_detections and track_id != self.near_player_id:
                 continue
 
             calibrated = bool(track.metric_calibrated and self.homography_matrix is not None)
@@ -556,6 +575,7 @@ class PlayerTracker:
                     if has_kinematics and efforts else None),
                 **self._direction_change_statistics(track.direction_changes, has_kinematics),
                 'num_detections': int(track.num_detections_total),
+                'is_near_player': track_id == self.near_player_id,
                 'is_active': bool(track.is_active),
                 'color': list(track.color),
                 'metric_calibrated': calibrated,
@@ -646,6 +666,7 @@ class PlayerTracker:
             'video_fps': self.fps,
             'court_calibrated': self.homography_matrix is not None,
             'court_dimensions_m': {'width': self.court_width_m, 'length': self.court_length_m},
+            'near_player_id': self.near_player_id,
             'tracks': {},
         }
         for track_id, track in self.tracks.items():
@@ -664,6 +685,7 @@ class PlayerTracker:
                 'total_distance_pixels': float(track.total_distance_pixels),
                 'num_detections': int(track.num_detections_total),
                 'is_active': bool(track.is_active),
+                'is_near_player': track_id == self.near_player_id,
                 'metric_calibrated': bool(track.metric_calibrated),
                 'color': list(track.color),
             }
@@ -723,11 +745,13 @@ class PlayerTracker:
         # YOLO's default 640 input upscales small videos, costing time for no
         # extra detail; use the native size (rounded up to YOLO's stride of 32).
         self.inference_size = min(640, -(-max(width, height) // 32) * 32) if width and height else 640
+        self.frame_height = height or None
 
         # A tracker instance can be reused without carrying over previous videos.
         self.tracks = {}
         self.removed_tracks = {}
         self.next_track_id = 0
+        self.near_player_id = None
 
         frame_count = 0
         print("Processing video for player tracking...")
@@ -743,6 +767,7 @@ class PlayerTracker:
                 pbar.update(1)
         cap.release()
 
+        self.near_player_id = self._link_near_player()
         # Deceleration needs the whole trajectory, so the annotated video is
         # rendered in a second pass once kinematics are known.
         self.compute_kinematics()
@@ -754,7 +779,115 @@ class PlayerTracker:
             'total_frames': int(frame_count),
             'video_fps': self.fps,
             'court_calibrated': self.homography_matrix is not None,
+            'near_player_id': self.near_player_id,
             'track_statistics': stats,
         }
+
+    @staticmethod
+    def _court_points(track: PlayerTrack) -> List[Tuple[int, Tuple[float, float]]]:
+        return [(f, p) for f, p in zip(track.frame_history, track.trajectory_court) if p is not None]
+
+    def _link_near_player(self) -> Optional[int]:
+        """Find the near-end player and join the pieces their track broke into.
+
+        A track breaks when the player is hidden or leaves the frame for longer
+        than ``max_disappeared``, and at the cuts of edited videos, where the
+        player jumps to a new place from one frame to the next.
+
+        Candidates are tracks seen for at least half a second that are either
+        mostly on the near half of this court, or mostly cut off by the bottom
+        of the frame (only someone close to the camera is). The candidate seen
+        longest is the seed; the chain is extended forwards and backwards with
+        the candidate that starts soonest after it ends (or ends latest before
+        it starts), within ``near_link_max_gap_s``. Returns the joined track's
+        id, or None without court calibration or candidates.
+        """
+        if self.homography_matrix is None or not self.fps:
+            return None
+        min_frames = max(5, int(0.5 * self.fps))
+        margin = self.near_court_x_margin_m
+        candidates = {}
+        for track in list(self.tracks.values()) + list(self.removed_tracks.values()):
+            if len(track.frame_history) < min_frames:
+                continue
+            points = self._court_points(track)
+            on_near_court = False
+            if len(points) >= min_frames:
+                xs = [p[0] for _, p in points]
+                ys = [p[1] for _, p in points]
+                on_near_court = (np.median(ys) > self.court_length_m / 2.0 and
+                                 -margin <= np.median(xs) <= self.court_width_m + margin)
+            cut_at_bottom = self.frame_height is not None and np.mean(
+                [box[3] >= self.frame_height - 2 for box in track.bbox_history]) >= 0.5
+            if on_near_court or cut_at_bottom:
+                candidates[track.track_id] = track
+        if not candidates:
+            return None
+
+        max_gap = self.near_link_max_gap_s * self.fps
+
+        def pick(options, key):
+            # Soonest first; among pieces starting within a second of each
+            # other, the one seen longest (the player rather than a passer-by).
+            options.sort(key=key)
+            soonest = key(options[0])
+            close = [tid for tid in options if key(tid) - soonest <= self.fps]
+            return max(close, key=lambda tid: len(candidates[tid].frame_history))
+
+        # Seed with a track that is measurably on the near court when one exists.
+        measurable = [tid for tid in candidates if len(self._court_points(candidates[tid])) >= min_frames]
+        seed = max(measurable or list(candidates), key=lambda tid: len(candidates[tid].frame_history))
+        chain = [seed]
+        while True:
+            start, end = candidates[chain[0]].frame_history[0], candidates[chain[-1]].frame_history[-1]
+            after = [tid for tid, t in candidates.items()
+                     if tid not in chain and 0 < t.frame_history[0] - end <= max_gap]
+            before = [tid for tid, t in candidates.items()
+                      if tid not in chain and 0 < start - t.frame_history[-1] <= max_gap]
+            if not after and not before:
+                break
+            if after:
+                chain.append(pick(after, lambda tid: candidates[tid].frame_history[0]))
+            if before:
+                chain.insert(0, pick(before, lambda tid: -candidates[tid].frame_history[-1]))
+
+        target = candidates[chain[0]]
+        for tid in chain[1:]:
+            self._append_track(target, candidates[tid])
+        if target.track_id in self.removed_tracks:
+            self.tracks[target.track_id] = self.removed_tracks.pop(target.track_id)
+        return target.track_id
+
+    def _append_track(self, target: PlayerTrack, piece: PlayerTrack) -> None:
+        """Append a later piece of the same player's track to ``target`` and drop the piece."""
+        target_points, piece_points = self._court_points(target), self._court_points(piece)
+        # The player covered at least the straight line across the gap, unless
+        # that would need running faster than possible: then the video was cut
+        # there (or the gap is too uncertain), and nothing is added.
+        bridge_m, bridge_px = 0.0, 0.0
+        if target_points and piece_points:
+            (end_frame, end_point), (start_frame, start_point) = target_points[-1], piece_points[0]
+            step = euclidean(end_point, start_point)
+            if step <= self.near_link_max_speed_mps * (start_frame - end_frame) / self.fps + 1.0:
+                bridge_m = step
+                bridge_px = euclidean(target.trajectory_pixels[-1], piece.trajectory_pixels[0])
+        offset_m = target.total_distance_meters + bridge_m
+        offset_px = target.total_distance_pixels + bridge_px
+
+        target.trajectory_pixels.extend(piece.trajectory_pixels)
+        target.trajectory_court.extend(piece.trajectory_court)
+        target.frame_history.extend(piece.frame_history)
+        target.bbox_history.extend(piece.bbox_history)
+        target.cumulative_distance_history_m.extend(offset_m + d for d in piece.cumulative_distance_history_m)
+        target.cumulative_distance_history_pixels.extend(offset_px + d for d in piece.cumulative_distance_history_pixels)
+        target.total_distance_meters = offset_m + piece.total_distance_meters
+        target.total_distance_pixels = offset_px + piece.total_distance_pixels
+        target.num_detections_total += piece.num_detections_total
+        target.last_frame_number = piece.last_frame_number
+        target.last_court_frame_number = max(target.last_court_frame_number, piece.last_court_frame_number)
+        target.is_active = piece.is_active
+        target.metric_calibrated = target.metric_calibrated or piece.metric_calibrated
+        self.tracks.pop(piece.track_id, None)
+        self.removed_tracks.pop(piece.track_id, None)
 
 # Main function removed - use main.py for application entry point

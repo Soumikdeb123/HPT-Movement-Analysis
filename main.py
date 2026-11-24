@@ -188,6 +188,7 @@ class TennisMatchAnalyzer:
                 'direction_changes_with_deceleration': track_stats['direction_changes_with_deceleration'],
                 'average_turn_angle_deg': track_stats['average_turn_angle_deg'],
                 'num_detections': track_stats['num_detections'],
+                'is_near_player': track_stats['is_near_player'],
                 'metric_calibrated': track_stats['metric_calibrated'],
             }
 
@@ -213,11 +214,6 @@ class TennisMatchAnalyzer:
                     ax1.scatter(positions[0, 0], positions[0, 1], color=color, s=45, marker='o')
                     ax1.scatter(positions[-1, 0], positions[-1, 1], color=color, s=45, marker='s')
                     all_court_points.append(positions)
-                if track.direction_changes:
-                    turns = np.asarray([c['court_position_m'] for c in track.direction_changes], dtype=float)
-                    ax1.scatter(turns[:, 0], turns[:, 1], s=140, marker='*', color=color,
-                                edgecolors='black', linewidths=0.8, zorder=5,
-                                label=f'Player {track_id} direction changes')
                 if len(track.frame_history) > 1 and len(track.cumulative_distance_history_m) == len(track.frame_history):
                     ax2.plot(track.frame_history, track.cumulative_distance_history_m,
                              color=color, label=f'Player {track_id}', linewidth=2)
@@ -349,6 +345,7 @@ class TennisMatchAnalyzer:
         avg_distance = (total_distance / len(calibrated_distances)) if calibrated_distances else None
         
         report['summary'] = {
+            'near_player_id': tracking_results['tracking_results'].get('near_player_id'),
             'total_players_detected': total_players,
             'total_distance_covered_meters': total_distance,
             'average_distance_per_calibrated_player_meters': avg_distance,
@@ -382,6 +379,7 @@ TENNIS MATCH ANALYSIS REPORT
 ============================
 
 Analysis Summary:
+- Near-end player: {f"Player {summary['near_player_id']}" if summary.get('near_player_id') is not None else 'Not found'}
 - Tracks with sufficient detections: {summary['total_players_detected']}
 - Total calibrated distance: {total_text}
 - Average distance per calibrated track: {average_text}
@@ -390,7 +388,9 @@ Analysis Summary:
 
 Player Details:
 """
-        for track_id, stats in report['distance_analysis'].items():
+        # The near-end player first: they are the one the analysis is for.
+        players = sorted(report['distance_analysis'].items(), key=lambda item: not item[1].get('is_near_player'))
+        for track_id, stats in players:
             distance = stats.get('total_distance_meters')
             speed = stats.get('average_speed_meters_per_second')
             distance_text = f"{distance:.2f} m" if distance is not None else "Unavailable (not calibrated)"
@@ -418,7 +418,7 @@ Player Details:
                             f"{with_decel} with deceleration ({100 * with_decel / changes:.0f}%), "
                             f"average angle {stats['average_turn_angle_deg']:.0f} deg")
             text_summary += f"""
-Player {track_id}:
+Player {track_id}{' (near-end player)' if stats.get('is_near_player') else ''}:
 - Total distance: {distance_text}
 - Average speed: {speed_text}
 - Deceleration: {decel_text}
