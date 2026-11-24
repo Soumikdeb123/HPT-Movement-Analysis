@@ -126,7 +126,7 @@ def test_real_video_loop_uses_shared_series_and_preserves_video_export(tmp_path,
         frame = 0
         def predict(self, *args, **kwargs):
             t = self.frame / 30
-            self.frame += 1
+            self.frame += 5
             x, y = cv2.perspectiveTransform(np.float32([[[1+2*t, 20]]]), inverse)[0][0]
             box = SimpleNamespace(conf=np.array([.95]), xyxy=[BoxCoordinates([x-8, y-25, x+8, y])])
             return [SimpleNamespace(boxes=[box])]

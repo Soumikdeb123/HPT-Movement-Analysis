@@ -17,11 +17,11 @@ def test_distance_uses_nine_detection_moving_average_not_velocity_integral():
         assert p['estimatedNetForceN'] == pytest.approx(75*p['tangentialAccelerationMps2'])
 
 
-def test_filter_trims_one_half_window_as_upstream():
+def test_filter_trims_two_half_windows_as_upstream():
     result = analyse_metric_motion([(f, f/30, 5.) for f in range(150)], 30, None, .9)
     samples = result['metrics']['speed']['samples']
-    assert samples[0]['timeSeconds'] == pytest.approx(10/30, abs=1e-4)
-    assert len(samples) == 130
+    assert samples[0]['timeSeconds'] == pytest.approx(20/30, abs=1e-4)
+    assert len(samples) == 110
     assert result['forceVelocity']['status'] == 'unavailable'
 
 

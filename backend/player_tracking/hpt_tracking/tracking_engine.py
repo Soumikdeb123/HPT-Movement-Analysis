@@ -352,9 +352,10 @@ class YuchenPrototypeTrackingEngine:
                 if not has_frame:
                     break
 
-                # Run YOLO every second frame on CPU cloud deployments.
+                # GPU inference processes every frame for accurate movement timing.
+                # CPU deployments sample every fifth frame to reduce processing cost.
                 # Keep the original frame_number so timestamps remain correct.
-                inference_stride = 5
+                inference_stride = 1 if self._device_argument != "cpu" else 5
                 if frame_number % inference_stride != 0:
                     frame_number += 1
                     if total_frames > 0:

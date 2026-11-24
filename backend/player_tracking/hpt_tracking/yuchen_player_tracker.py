@@ -1,3 +1,6 @@
+import csv
+import math
+
 import cv2
 import numpy as np
 from ultralytics import YOLO
@@ -36,6 +39,7 @@ class PlayerTrack:
     speed_history_mps: list = field(default_factory=list)
     acceleration_history_mps2: list = field(default_factory=list)
     deceleration_efforts: list = field(default_factory=list)
+    direction_changes: list = field(default_factory=list)
     kinematics_by_frame: dict = field(default_factory=dict)  # frame -> (speed, accel)
     last_frame_number: int = 0
     last_court_frame_number: int = 0
@@ -84,8 +88,26 @@ class PlayerTracker:
         self.deceleration_threshold_mps2 = 2.0
         self.high_intensity_deceleration_mps2 = 3.0
         self.min_deceleration_duration_s = 0.2
+        # A direction change compares the mean heading over the window before
+        # a frame with the mean heading over the window after it.
+        self.cod_min_angle_deg = 45.0
+        # Below this the heading is meaningless (a near-still player's
+        # direction swings with every small wobble).
+        self.cod_min_speed_mps = 1.0
+        self.cod_window_s = 0.3
+        # A plant-and-reverse turn may pause this long between moving in and out.
+        self.cod_max_pause_s = 1.0
+        self.cod_min_interval_s = 0.5  # one turn is not counted twice
         self.removed_tracks: Dict[int, PlayerTrack] = {}
         self.inference_size = 640  # set per video; never upscale small videos
+        # The near-end player (the one on the camera's side of the net). Their
+        # track can break into pieces when they are hidden or leave the frame;
+        # pieces up to this far apart in time are joined into one.
+        self.near_player_id: Optional[int] = None
+        self.near_link_max_gap_s = 5.0
+        self.frame_height: Optional[int] = None  # set per video
+        self.near_link_max_speed_mps = 8.0  # average speed allowed across a gap
+        self.near_court_x_margin_m = 2.0  # wider than this off the court: another court or a spectator
 
     def set_calibration(
         self,
@@ -134,14 +156,20 @@ class PlayerTracker:
         boxes = self.model(frame, verbose=False, classes=[0], conf=confidence_threshold,
                            imgsz=self.inference_size)[0].boxes
         detections: List[PlayerDetection] = []
+        frame_height, frame_width = frame.shape[:2]
         for (x1, y1, x2, y2), confidence in zip(boxes.xyxy.cpu().numpy().tolist(),
                                                 boxes.conf.cpu().numpy().tolist()):
             ground_point = ((x1 + x2) / 2.0, y2)
+            # A box cut off by the edge of the frame ends at the edge, not at
+            # the feet (bottom) or the body's centre line (sides), so its
+            # court position would be wrong. Such frames are tracked in pixels
+            # only and the trajectory is interpolated across them.
+            feet_visible = y2 < frame_height - 2 and x1 > 1 and x2 < frame_width - 2
             detections.append(PlayerDetection(
                 bbox=[x1, y1, x2, y2],
                 ground_point=ground_point,
                 confidence=confidence,
-                court_point=self.pixel_to_court(ground_point),
+                court_point=self.pixel_to_court(ground_point) if feet_visible else None,
             ))
         return detections
 
@@ -320,12 +348,15 @@ class PlayerTracker:
         window = max(5, int(round(self.kinematics_window_s * self.fps)) | 1)
         # Near a segment's ends the filter extrapolates rather than smooths,
         # which shows up as fake deceleration spikes; drop those frames.
-        edge = window // 2
+        # Acceleration is filtered from speed, which is itself filtered, so
+        # both filters' edges must go: two half-windows at each end.
+        edge = 2 * (window // 2)
 
         for track in list(self.tracks.values()) + list(self.removed_tracks.values()):
             speed_by_frame: Dict[int, float] = {}
             accel_by_frame: Dict[int, float] = {}
             efforts: List[Dict] = []
+            segments: List[Dict] = []
             for frames, points in self._kinematic_segments(track):
                 if frames[-1] - frames[0] + 1 < window + 2 * edge:
                     continue
@@ -340,21 +371,189 @@ class PlayerTracker:
                 vy = savgol_filter(ys, window, 2, deriv=1, delta=dt)
                 speed = np.hypot(vx, vy)
                 accel = savgol_filter(speed, window, 2, deriv=1, delta=dt)
-                full_frames, speed, accel = full_frames[edge:-edge], speed[edge:-edge], accel[edge:-edge]
+                trimmed = slice(edge, -edge)
+                full_frames, speed, accel = full_frames[trimmed], speed[trimmed], accel[trimmed]
                 for frame, s, a in zip(full_frames, speed, accel):
                     speed_by_frame[int(frame)] = float(s)
                     accel_by_frame[int(frame)] = float(a)
                 efforts.extend(self._find_deceleration_efforts(full_frames, speed, accel))
+                segments.append({
+                    'frames': full_frames, 'xs': xs[trimmed], 'ys': ys[trimmed],
+                    'vx': vx[trimmed], 'vy': vy[trimmed], 'speed': speed,
+                    'measured': set(int(f) for f in frames),
+                })
 
             track.speed_history_mps = [speed_by_frame.get(f) for f in track.frame_history]
             track.acceleration_history_mps2 = [accel_by_frame.get(f) for f in track.frame_history]
             track.deceleration_efforts = efforts
             track.kinematics_by_frame = {f: (speed_by_frame[f], accel_by_frame[f]) for f in speed_by_frame}
+            # Turns are found after all efforts, so each can point at the one it overlaps.
+            changes: List[Dict] = []
+            for segment in segments:
+                changes.extend(self._find_direction_changes(segment, efforts))
+            for event_id, change in enumerate(changes):
+                change['event_id'] = event_id
+                change['player_id'] = int(track.track_id)
+            track.direction_changes = changes
+
+    def _court_zone(self, x: float, y: float) -> str:
+        """Name the court area at (x, y), from the player's own view facing the net.
+
+        Depth is measured from the player's own baseline: behind it, between
+        it and the service line (backcourt), or between the service line and
+        the net (forecourt). Left/centre/right are thirds of the doubles width.
+        """
+        length, width = self.court_length_m, self.court_width_m
+        near_half = y >= length / 2.0
+        depth = (length - y) if near_half else y
+        if depth < 0:
+            band = 'behind_baseline'
+        elif depth < length / 2.0 - 6.40:
+            band = 'backcourt'
+        else:
+            band = 'forecourt'
+        # The near player faces away from the camera, so their left is the
+        # image's left; the far player faces the camera, so it is reversed.
+        if x < width / 3.0:
+            side = 'left' if near_half else 'right'
+        elif x > 2.0 * width / 3.0:
+            side = 'right' if near_half else 'left'
+        else:
+            side = 'centre'
+        return f'{band}_{side}'
+
+    def _find_direction_changes(self, segment: Dict, efforts: List[Dict]) -> List[Dict]:
+        """Turns of at least cod_min_angle_deg within one continuous trajectory segment.
+
+        For every frame, the heading the player had when last moving before it
+        (mean velocity over a window) is compared with the heading when they
+        next move after it. Using the last/next *moving* moment matters for
+        plant-and-reverse turns: at the pivot the player is nearly still, so
+        the frames right around it carry no usable direction. The pause in
+        between may last up to cod_max_pause_s. Each run of frames above the
+        angle threshold becomes one event, placed at its sharpest, slowest
+        frame.
+        """
+        frames, vx, vy, speed = segment['frames'], segment['vx'], segment['vy'], segment['speed']
+        w = max(1, int(round(self.cod_window_s * self.fps)))
+        max_pause = int(round(self.cod_max_pause_s * self.fps))
+        n = len(frames)
+        if n < 2 * w + 1:
+            return []
+
+        moving = speed >= self.cod_min_speed_mps
+        last_moving = np.full(n, -1)   # latest moving index at or before i
+        next_moving = np.full(n, n)    # earliest moving index at or after i
+        for i in range(n):
+            last_moving[i] = i if moving[i] else (last_moving[i - 1] if i else -1)
+        for i in range(n - 1, -1, -1):
+            next_moving[i] = i if moving[i] else (next_moving[i + 1] if i < n - 1 else n)
+
+        angles = np.full(n, np.nan)
+        cross = np.zeros(n)
+        windows = np.zeros((n, 4), dtype=int)  # before start/end, after start/end (inclusive)
+        for i in range(n):
+            entry, exit_ = last_moving[i], next_moving[i]
+            if entry < 0 or exit_ >= n or exit_ - entry > max_pause:
+                continue
+            before_start, before_end = entry - w + 1, entry
+            after_start, after_end = (exit_ + 1, exit_ + w) if exit_ == entry else (exit_, exit_ + w - 1)
+            if before_start < 0 or after_end >= n:
+                continue
+            before = np.array([vx[before_start:before_end + 1].mean(), vy[before_start:before_end + 1].mean()])
+            after = np.array([vx[after_start:after_end + 1].mean(), vy[after_start:after_end + 1].mean()])
+            before_norm, after_norm = np.hypot(*before), np.hypot(*after)
+            if before_norm < self.cod_min_speed_mps or after_norm < self.cod_min_speed_mps:
+                continue
+            cosine = np.clip(np.dot(before, after) / (before_norm * after_norm), -1.0, 1.0)
+            angles[i] = math.degrees(math.acos(cosine))
+            cross[i] = before[0] * after[1] - before[1] * after[0]
+            windows[i] = (before_start, before_end, after_start, after_end)
+
+        # One event per run of above-threshold frames: the sharpest frame, and
+        # among equally sharp frames (a pause shares one entry/exit) the slowest.
+        above = np.nan_to_num(angles, nan=0.0) >= self.cod_min_angle_deg
+        turns: List[int] = []
+        i = 0
+        while i < n:
+            if not above[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and above[j]:
+                j += 1
+            sharpest = np.nanmax(angles[i:j])
+            candidates = [k for k in range(i, j) if angles[k] >= sharpest - 1.0]
+            turns.append(min(candidates, key=lambda k: speed[k]))
+            i = j
+        # Turns closer together than cod_min_interval_s are one movement:
+        # keep the sharper of the two.
+        min_gap = int(round(self.cod_min_interval_s * self.fps))
+        kept: List[int] = []
+        for t in turns:
+            if kept and frames[t] - frames[kept[-1]] < min_gap:
+                if angles[t] > angles[kept[-1]]:
+                    kept[-1] = t
+            else:
+                kept.append(t)
+
+        changes = []
+        for t in kept:
+            before_start, before_end, after_start, after_end = windows[t]
+            start, end = before_start, after_end
+            start_frame, end_frame = int(frames[start]), int(frames[end])
+            angle = float(angles[t])
+            x, y = float(segment['xs'][t]), float(segment['ys'][t])
+
+            # Court y grows towards the camera, so on this top-down view a
+            # positive cross product is a clockwise, i.e. right-hand, turn.
+            direction = 'right' if cross[t] > 0 else 'left'
+            if angle < 90:
+                turn_type = 'cut'
+            elif angle < 135:
+                turn_type = 'wide'
+            else:
+                turn_type = 'reversal'
+
+            overlapping = [(k, e) for k, e in enumerate(efforts)
+                           if e['start_frame'] <= end_frame and e['end_frame'] >= start_frame]
+            effort_index, effort = (max(overlapping, key=lambda item: item[1]['peak_deceleration_mps2'])
+                                    if overlapping else (None, None))
+
+            if any(f not in segment['measured'] for f in range(start_frame, end_frame + 1)):
+                quality = 'gap'  # part of the window was filled by interpolation
+            elif y < self.court_length_m / 2.0:
+                quality = 'far_court'  # far side: each pixel spans more court
+            else:
+                quality = 'good'
+
+            changes.append({
+                'start_frame': start_frame,
+                'turn_frame': int(frames[t]),
+                'end_frame': end_frame,
+                'time_s': float(frames[t] / self.fps),
+                'court_position_m': [x, y],
+                'court_zone': self._court_zone(x, y),
+                'turn_angle_deg': angle,
+                'turn_direction': direction,
+                'turn_type': turn_type,
+                'speed_before_mps': float(speed[before_start:before_end + 1].mean()),
+                'speed_min_mps': float(speed[start:end + 1].min()),
+                'speed_after_mps': float(speed[after_start:after_end + 1].mean()),
+                'with_deceleration': effort is not None,
+                'deceleration_effort_index': effort_index,
+                'peak_deceleration_mps2': float(effort['peak_deceleration_mps2']) if effort else None,
+                'data_quality': quality,
+            })
+        return changes
 
     def get_track_statistics(self) -> Dict[int, Dict]:
         stats: Dict[int, Dict] = {}
+        # Flickers shorter than half a second (spectators, false detections)
+        # are not reported as players.
+        min_detections = max(2, int(0.5 * self.fps)) if self.fps else 2
         for track_id, track in self.tracks.items():
-            if track.num_detections_total < 2:
+            if track.num_detections_total < min_detections and track_id != self.near_player_id:
                 continue
 
             calibrated = bool(track.metric_calibrated and self.homography_matrix is not None)
@@ -374,12 +573,34 @@ class PlayerTracker:
                 'average_peak_deceleration_mps2': (
                     float(np.mean([e['peak_deceleration_mps2'] for e in efforts]))
                     if has_kinematics and efforts else None),
+                **self._direction_change_statistics(track.direction_changes, has_kinematics),
                 'num_detections': int(track.num_detections_total),
+                'is_near_player': track_id == self.near_player_id,
                 'is_active': bool(track.is_active),
                 'color': list(track.color),
                 'metric_calibrated': calibrated,
             }
         return stats
+
+    @staticmethod
+    def _direction_change_statistics(changes: List[Dict], available: bool) -> Dict:
+        """Summary counts of one player's direction changes (None when not computable)."""
+        if not available:
+            return {key: None for key in (
+                'direction_changes', 'direction_changes_by_type', 'direction_changes_left',
+                'direction_changes_right', 'direction_changes_with_deceleration',
+                'average_turn_angle_deg')}
+        return {
+            'direction_changes': len(changes),
+            'direction_changes_by_type': {
+                turn_type: sum(1 for c in changes if c['turn_type'] == turn_type)
+                for turn_type in ('cut', 'wide', 'reversal')},
+            'direction_changes_left': sum(1 for c in changes if c['turn_direction'] == 'left'),
+            'direction_changes_right': sum(1 for c in changes if c['turn_direction'] == 'right'),
+            'direction_changes_with_deceleration': sum(1 for c in changes if c['with_deceleration']),
+            'average_turn_angle_deg': (float(np.mean([c['turn_angle_deg'] for c in changes]))
+                                       if changes else None),
+        }
 
     def _build_frame_index(self) -> Dict[int, List[Tuple[PlayerTrack, int]]]:
         """Map each frame number to the (track, history index) pairs seen in it."""
@@ -408,6 +629,8 @@ class PlayerTracker:
                 label = f"ID: {track.track_id} | Dist: {track.cumulative_distance_history_pixels[i]:.0f} px"
             self._put_label(result, label, x1, max(20, int(y1) - 10), 0.5, track.color)
 
+            # Labels stack upwards above the ID label when there is no room below the box.
+            above_y = int(y1) - 30
             kinematics = track.kinematics_by_frame.get(frame_number)
             if kinematics is not None:
                 speed, accel = kinematics
@@ -415,10 +638,18 @@ class PlayerTracker:
                 text = f"{speed:.1f} m/s  {accel:+.1f} m/s^2"
                 if decelerating:
                     text = "DECEL " + text
-                # Below the box, or above the ID label when the box reaches the frame bottom.
-                text_y = int(y2) + 15 if int(y2) + 15 <= result.shape[0] - 5 else max(20, int(y1) - 30)
+                if int(y2) + 15 <= result.shape[0] - 5:
+                    text_y = int(y2) + 15
+                else:
+                    text_y, above_y = max(20, above_y), above_y - 20
                 self._put_label(result, text, x1, text_y, 0.45,
                                 (0, 0, 255) if decelerating else track.color)
+
+            for change in track.direction_changes:
+                if change['start_frame'] <= frame_number <= change['end_frame']:
+                    text = f"COD {change['turn_angle_deg']:.0f}deg {change['turn_direction'][0].upper()}"
+                    self._put_label(result, text, x1, max(20, above_y), 0.5, (0, 165, 255))
+                    break
         return result
 
     @staticmethod
@@ -435,6 +666,7 @@ class PlayerTracker:
             'video_fps': self.fps,
             'court_calibrated': self.homography_matrix is not None,
             'court_dimensions_m': {'width': self.court_width_m, 'length': self.court_length_m},
+            'near_player_id': self.near_player_id,
             'tracks': {},
         }
         for track_id, track in self.tracks.items():
@@ -448,15 +680,33 @@ class PlayerTracker:
                 'speed_mps': track.speed_history_mps,
                 'acceleration_mps2': track.acceleration_history_mps2,
                 'deceleration_efforts': track.deceleration_efforts,
+                'direction_changes': track.direction_changes,
                 'total_distance_meters': float(track.total_distance_meters) if track.metric_calibrated else None,
                 'total_distance_pixels': float(track.total_distance_pixels),
                 'num_detections': int(track.num_detections_total),
                 'is_active': bool(track.is_active),
+                'is_near_player': track_id == self.near_player_id,
                 'metric_calibrated': bool(track.metric_calibrated),
                 'color': list(track.color),
             }
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
+
+    def save_direction_changes_csv(self, output_file: str):
+        """One row per direction change, for spreadsheets."""
+        columns = ['player_id', 'event_id', 'time_s', 'start_frame', 'turn_frame', 'end_frame',
+                   'court_x_m', 'court_y_m', 'court_zone', 'turn_angle_deg', 'turn_direction',
+                   'turn_type', 'speed_before_mps', 'speed_min_mps', 'speed_after_mps',
+                   'with_deceleration', 'deceleration_effort_index', 'peak_deceleration_mps2',
+                   'data_quality']
+        with open(output_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=columns)
+            writer.writeheader()
+            for track in self.tracks.values():
+                for change in track.direction_changes:
+                    row = {key: change.get(key) for key in columns}
+                    row['court_x_m'], row['court_y_m'] = change['court_position_m']
+                    writer.writerow(row)
 
     def _write_annotated_video(self, video_path: str, output_path: str, width: int, height: int):
         cap = cv2.VideoCapture(video_path)
@@ -495,11 +745,13 @@ class PlayerTracker:
         # YOLO's default 640 input upscales small videos, costing time for no
         # extra detail; use the native size (rounded up to YOLO's stride of 32).
         self.inference_size = min(640, -(-max(width, height) // 32) * 32) if width and height else 640
+        self.frame_height = height or None
 
         # A tracker instance can be reused without carrying over previous videos.
         self.tracks = {}
         self.removed_tracks = {}
         self.next_track_id = 0
+        self.near_player_id = None
 
         frame_count = 0
         print("Processing video for player tracking...")
@@ -515,6 +767,7 @@ class PlayerTracker:
                 pbar.update(1)
         cap.release()
 
+        self.near_player_id = self._link_near_player()
         # Deceleration needs the whole trajectory, so the annotated video is
         # rendered in a second pass once kinematics are known.
         self.compute_kinematics()
@@ -526,7 +779,115 @@ class PlayerTracker:
             'total_frames': int(frame_count),
             'video_fps': self.fps,
             'court_calibrated': self.homography_matrix is not None,
+            'near_player_id': self.near_player_id,
             'track_statistics': stats,
         }
+
+    @staticmethod
+    def _court_points(track: PlayerTrack) -> List[Tuple[int, Tuple[float, float]]]:
+        return [(f, p) for f, p in zip(track.frame_history, track.trajectory_court) if p is not None]
+
+    def _link_near_player(self) -> Optional[int]:
+        """Find the near-end player and join the pieces their track broke into.
+
+        A track breaks when the player is hidden or leaves the frame for longer
+        than ``max_disappeared``, and at the cuts of edited videos, where the
+        player jumps to a new place from one frame to the next.
+
+        Candidates are tracks seen for at least half a second that are either
+        mostly on the near half of this court, or mostly cut off by the bottom
+        of the frame (only someone close to the camera is). The candidate seen
+        longest is the seed; the chain is extended forwards and backwards with
+        the candidate that starts soonest after it ends (or ends latest before
+        it starts), within ``near_link_max_gap_s``. Returns the joined track's
+        id, or None without court calibration or candidates.
+        """
+        if self.homography_matrix is None or not self.fps:
+            return None
+        min_frames = max(5, int(0.5 * self.fps))
+        margin = self.near_court_x_margin_m
+        candidates = {}
+        for track in list(self.tracks.values()) + list(self.removed_tracks.values()):
+            if len(track.frame_history) < min_frames:
+                continue
+            points = self._court_points(track)
+            on_near_court = False
+            if len(points) >= min_frames:
+                xs = [p[0] for _, p in points]
+                ys = [p[1] for _, p in points]
+                on_near_court = (np.median(ys) > self.court_length_m / 2.0 and
+                                 -margin <= np.median(xs) <= self.court_width_m + margin)
+            cut_at_bottom = self.frame_height is not None and np.mean(
+                [box[3] >= self.frame_height - 2 for box in track.bbox_history]) >= 0.5
+            if on_near_court or cut_at_bottom:
+                candidates[track.track_id] = track
+        if not candidates:
+            return None
+
+        max_gap = self.near_link_max_gap_s * self.fps
+
+        def pick(options, key):
+            # Soonest first; among pieces starting within a second of each
+            # other, the one seen longest (the player rather than a passer-by).
+            options.sort(key=key)
+            soonest = key(options[0])
+            close = [tid for tid in options if key(tid) - soonest <= self.fps]
+            return max(close, key=lambda tid: len(candidates[tid].frame_history))
+
+        # Seed with a track that is measurably on the near court when one exists.
+        measurable = [tid for tid in candidates if len(self._court_points(candidates[tid])) >= min_frames]
+        seed = max(measurable or list(candidates), key=lambda tid: len(candidates[tid].frame_history))
+        chain = [seed]
+        while True:
+            start, end = candidates[chain[0]].frame_history[0], candidates[chain[-1]].frame_history[-1]
+            after = [tid for tid, t in candidates.items()
+                     if tid not in chain and 0 < t.frame_history[0] - end <= max_gap]
+            before = [tid for tid, t in candidates.items()
+                      if tid not in chain and 0 < start - t.frame_history[-1] <= max_gap]
+            if not after and not before:
+                break
+            if after:
+                chain.append(pick(after, lambda tid: candidates[tid].frame_history[0]))
+            if before:
+                chain.insert(0, pick(before, lambda tid: -candidates[tid].frame_history[-1]))
+
+        target = candidates[chain[0]]
+        for tid in chain[1:]:
+            self._append_track(target, candidates[tid])
+        if target.track_id in self.removed_tracks:
+            self.tracks[target.track_id] = self.removed_tracks.pop(target.track_id)
+        return target.track_id
+
+    def _append_track(self, target: PlayerTrack, piece: PlayerTrack) -> None:
+        """Append a later piece of the same player's track to ``target`` and drop the piece."""
+        target_points, piece_points = self._court_points(target), self._court_points(piece)
+        # The player covered at least the straight line across the gap, unless
+        # that would need running faster than possible: then the video was cut
+        # there (or the gap is too uncertain), and nothing is added.
+        bridge_m, bridge_px = 0.0, 0.0
+        if target_points and piece_points:
+            (end_frame, end_point), (start_frame, start_point) = target_points[-1], piece_points[0]
+            step = euclidean(end_point, start_point)
+            if step <= self.near_link_max_speed_mps * (start_frame - end_frame) / self.fps + 1.0:
+                bridge_m = step
+                bridge_px = euclidean(target.trajectory_pixels[-1], piece.trajectory_pixels[0])
+        offset_m = target.total_distance_meters + bridge_m
+        offset_px = target.total_distance_pixels + bridge_px
+
+        target.trajectory_pixels.extend(piece.trajectory_pixels)
+        target.trajectory_court.extend(piece.trajectory_court)
+        target.frame_history.extend(piece.frame_history)
+        target.bbox_history.extend(piece.bbox_history)
+        target.cumulative_distance_history_m.extend(offset_m + d for d in piece.cumulative_distance_history_m)
+        target.cumulative_distance_history_pixels.extend(offset_px + d for d in piece.cumulative_distance_history_pixels)
+        target.total_distance_meters = offset_m + piece.total_distance_meters
+        target.total_distance_pixels = offset_px + piece.total_distance_pixels
+        target.num_detections_total += piece.num_detections_total
+        target.last_frame_number = piece.last_frame_number
+        target.last_court_frame_number = max(target.last_court_frame_number, piece.last_court_frame_number)
+        target.is_active = piece.is_active
+        target.metric_calibrated = target.metric_calibrated or piece.metric_calibrated
+        self.tracks.pop(piece.track_id, None)
+        self.removed_tracks.pop(piece.track_id, None)
 
 # Main function removed - use main.py for application entry point

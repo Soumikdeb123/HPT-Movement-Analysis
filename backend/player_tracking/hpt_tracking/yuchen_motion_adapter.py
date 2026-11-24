@@ -35,6 +35,11 @@ def analyse_metric_motion(samples, fps, athlete_mass_kg, confidence):
     tracker.deceleration_threshold_mps2 = 2.0
     tracker.high_intensity_deceleration_mps2 = 3.0
     tracker.min_deceleration_duration_s = .2
+    tracker.cod_min_angle_deg = 45.0
+    tracker.cod_min_speed_mps = 1.0
+    tracker.cod_window_s = 0.3
+    tracker.cod_max_pause_s = 1.0
+    tracker.cod_min_interval_s = 0.5
     for i, (frame, x, y) in enumerate(samples):
         detection = PlayerDetection([x, y, x, y], (x, y), 1., (x, y))
         if i == 0:
