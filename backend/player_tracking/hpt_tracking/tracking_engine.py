@@ -354,7 +354,7 @@ class YuchenPrototypeTrackingEngine:
 
                 # Run YOLO every second frame on CPU cloud deployments.
                 # Keep the original frame_number so timestamps remain correct.
-                inference_stride = 2
+                inference_stride = 5
                 if frame_number % inference_stride != 0:
                     frame_number += 1
                     if total_frames > 0:
