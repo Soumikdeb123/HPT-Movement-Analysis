@@ -1238,32 +1238,13 @@ class _AnnotatedVideoCard extends StatefulWidget {
 }
 
 class _AnnotatedVideoCardState extends State<_AnnotatedVideoCard> {
-  late final VideoPlayerController _controller;
+  VideoPlayerController? _controller;
   Object? _loadError;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = VideoPlayerController.networkUrl(
-      Uri.parse(widget.url),
-      httpHeaders: {
-        if (AuthRepository.token != null)
-          'Authorization': 'Bearer ${AuthRepository.token}',
-      },
-    );
-    _controller
-        .initialize()
-        .then((_) {
-          if (mounted) setState(() {});
-        })
-        .catchError((Object error) {
-          if (mounted) setState(() => _loadError = error);
-        });
-  }
+  bool _loading = false;
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller?.dispose();
     super.dispose();
   }
 
@@ -1279,14 +1260,27 @@ class _AnnotatedVideoCardState extends State<_AnnotatedVideoCard> {
         ),
       );
     }
-    if (!_controller.value.isInitialized) {
-      return const ListTile(
-        contentPadding: EdgeInsets.zero,
-        leading: SizedBox.square(
-          dimension: 22,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-        title: Text('Loading annotated video…'),
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Annotated video',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _loading ? null : _loadVideo,
+            icon: _loading
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.play_circle_outline),
+            label: Text(_loading ? 'Loading video…' : 'Load video'),
+          ),
+        ],
       );
     }
 
@@ -1300,11 +1294,11 @@ class _AnnotatedVideoCardState extends State<_AnnotatedVideoCard> {
           child: InkWell(
             onTap: _openFullscreen,
             child: AspectRatio(
-              aspectRatio: _controller.value.aspectRatio,
+              aspectRatio: controller.value.aspectRatio,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  VideoPlayer(_controller),
+                  VideoPlayer(controller),
                   const Align(
                     alignment: Alignment.topRight,
                     child: Padding(
@@ -1321,14 +1315,14 @@ class _AnnotatedVideoCardState extends State<_AnnotatedVideoCard> {
             ),
           ),
         ),
-        VideoProgressIndicator(_controller, allowScrubbing: true),
+        VideoProgressIndicator(controller, allowScrubbing: true),
         Row(
           children: [
             IconButton.filledTonal(
-              tooltip: _controller.value.isPlaying ? 'Pause' : 'Play',
+              tooltip: controller.value.isPlaying ? 'Pause' : 'Play',
               onPressed: _togglePlayback,
               icon: Icon(
-                _controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
               ),
             ),
             const SizedBox(width: 8),
@@ -1344,20 +1338,57 @@ class _AnnotatedVideoCardState extends State<_AnnotatedVideoCard> {
     );
   }
 
-  void _togglePlayback() {
+  Future<void> _loadVideo() async {
     setState(() {
-      if (_controller.value.isPlaying) {
-        _controller.pause();
+      _loading = true;
+      _loadError = null;
+    });
+    final controller = VideoPlayerController.networkUrl(
+      Uri.parse(widget.url),
+      httpHeaders: {
+        if (AuthRepository.token != null)
+          'Authorization': 'Bearer ${AuthRepository.token}',
+      },
+    );
+    try {
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() {
+        _controller = controller;
+        _loading = false;
+      });
+    } catch (error) {
+      await controller.dispose();
+      if (mounted) {
+        setState(() {
+          _loadError = error;
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  void _togglePlayback() {
+    final controller = _controller;
+    if (controller == null) return;
+    setState(() {
+      if (controller.value.isPlaying) {
+        controller.pause();
       } else {
-        _controller.play();
+        controller.play();
       }
     });
   }
 
   Future<void> _openFullscreen() async {
+    final controller = _controller;
+    if (controller == null) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (context) => _FullScreenVideoPage(controller: _controller),
+        builder: (context) => _FullScreenVideoPage(controller: controller),
       ),
     );
     if (mounted) setState(() {});

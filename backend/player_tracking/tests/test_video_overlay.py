@@ -1,4 +1,7 @@
 from types import SimpleNamespace
+import subprocess
+
+import imageio_ffmpeg
 import cv2
 import numpy as np
 import pytest
@@ -36,6 +39,15 @@ def test_video_has_per_frame_annotation_but_no_ghost_box(tmp_path):
     assert present.sum() > absent.sum()+10000
     assert cap.get(cv2.CAP_PROP_FRAME_COUNT) == 3
     cap.release()
+    probe = subprocess.run(
+        [imageio_ffmpeg.get_ffmpeg_exe(), "-i", str(output), "-f", "null", "-"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert probe.returncode == 0
+    assert "Video: h264" in probe.stderr
+    assert not (tmp_path / "output.intermediate.mp4").exists()
 
 
 def test_render_respects_cancellation(tmp_path):

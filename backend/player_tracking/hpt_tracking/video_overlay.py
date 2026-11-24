@@ -4,7 +4,11 @@ Centred filters need future frames. Values are aligned to video time, not claime
 to be live-stream computations. Missing/trimmed samples are explicitly N/A.
 """
 from math import isfinite
+from pathlib import Path
+import subprocess
+
 import cv2
+import imageio_ffmpeg
 import numpy as np
 
 
@@ -58,8 +62,16 @@ def draw_label(frame, bbox, lines, colour):
 
 def render_video(input_path, output_path, tracks, players, calibration, fps,
                  width, height, total_frames, cancelled, progress, cancelled_error):
+    output_path = Path(output_path)
+    intermediate_path = output_path.with_name(f'{output_path.stem}.intermediate.mp4')
+    intermediate_path.unlink(missing_ok=True)
     capture = cv2.VideoCapture(str(input_path))
-    writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+    writer = cv2.VideoWriter(
+        str(intermediate_path),
+        cv2.VideoWriter_fourcc(*'mp4v'),
+        fps,
+        (width, height),
+    )
     if not capture.isOpened() or not writer.isOpened():
         capture.release()
         writer.release()
@@ -67,26 +79,52 @@ def render_video(input_path, output_path, tracks, players, calibration, fps,
     values = {p['trackId']: frame_values(p, fps) for p in players}
     index = 0
     try:
-        while True:
-            if cancelled():
-                raise cancelled_error('Analysis cancelled during video rendering.')
-            ok, frame = capture.read()
-            if not ok:
-                break
-            if calibration is not None:
-                cv2.polylines(frame, [calibration.corners.astype(np.int32)], True, (20,220,255), 2)
-            for track in tracks:
-                bbox = track.bbox_history.get(index)
-                if bbox is None:
-                    continue  # No stale box/values while the athlete is absent.
-                lines = label_lines(track.track_id, values[str(track.track_id)], index)
-                draw_label(frame, bbox, lines, track.colour)
-            writer.write(frame)
-            index += 1
-            if total_frames:
-                progress(min(index/total_frames, 1.))
+        try:
+            while True:
+                if cancelled():
+                    raise cancelled_error('Analysis cancelled during video rendering.')
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                if calibration is not None:
+                    cv2.polylines(frame, [calibration.corners.astype(np.int32)], True, (20,220,255), 2)
+                for track in tracks:
+                    bbox = track.bbox_history.get(index)
+                    if bbox is None:
+                        continue  # No stale box/values while the athlete is absent.
+                    lines = label_lines(track.track_id, values[str(track.track_id)], index)
+                    draw_label(frame, bbox, lines, track.colour)
+                writer.write(frame)
+                index += 1
+                if total_frames:
+                    progress(min(index/total_frames, 1.))
+        finally:
+            capture.release()
+            writer.release()
+        if total_frames and index != total_frames:
+            raise RuntimeError('Video decoding ended early during annotation; please retry.')
+        _transcode_h264(intermediate_path, output_path)
     finally:
-        capture.release()
-        writer.release()
-    if total_frames and index != total_frames:
-        raise RuntimeError('Video decoding ended early during annotation; please retry.')
+        intermediate_path.unlink(missing_ok=True)
+
+
+def _transcode_h264(input_path, output_path):
+    """Produce a broadly supported, streamable H.264 result video."""
+    command = [
+        imageio_ffmpeg.get_ffmpeg_exe(),
+        '-y',
+        '-loglevel', 'error',
+        '-i', str(input_path),
+        '-an',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', '20',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        str(output_path),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    if completed.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
+        output_path.unlink(missing_ok=True)
+        detail = completed.stderr.strip() or 'unknown FFmpeg error'
+        raise RuntimeError(f'Could not create the H.264 annotated video: {detail}')
