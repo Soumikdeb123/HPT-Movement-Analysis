@@ -1613,6 +1613,8 @@ class _ReportImages extends StatelessWidget {
 
   Widget _image(String url) => Image.network(
     url,
+    cacheWidth: 900,
+    filterQuality: FilterQuality.medium,
     headers: {
       if (AuthRepository.token != null)
         'Authorization': 'Bearer ${AuthRepository.token}',

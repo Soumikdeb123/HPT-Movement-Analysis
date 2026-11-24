@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/analysis_result.dart';
 
+/// Lightweight coach-facing sprint profile built without a custom canvas.
 class ForceVelocityChart extends StatelessWidget {
   const ForceVelocityChart({
     super.key,
@@ -16,7 +17,10 @@ class ForceVelocityChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final available = analysis.currentCurve.length >= 2;
+    final current = _validPoints(analysis.currentCurve);
+    final baseline = _validPoints(analysis.baselineCurve);
+    final available = current.length >= 2;
+
     return Card(
       color: Theme.of(context).colorScheme.surfaceContainerLow,
       child: Padding(
@@ -29,55 +33,36 @@ class ForceVelocityChart extends StatelessWidget {
               style: Theme.of(context).textTheme.titleLarge
                   ?.copyWith(fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 4),
-            const Text(
-              'This match compared with the player’s personal sprint baseline.',
-            ),
             if (analysis.quality.status == 'limited') ...[
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               const Align(
                 alignment: Alignment.centerLeft,
                 child: Chip(label: Text('Limited evidence')),
               ),
             ],
-            const SizedBox(height: 16),
-            if (!available)
-              _Unavailable(analysis: analysis)
-            else ...[
-              AspectRatio(
-                key: const Key('force-velocity-chart'),
-                aspectRatio: 1.45,
-                child: CustomPaint(
-                  painter: _ForceVelocityPainter(
-                    current: analysis.currentCurve,
-                    baseline: analysis.baselineCurve,
-                    currentColor: Theme.of(context).colorScheme.primary,
-                    baselineColor: Theme.of(context).colorScheme.outline,
-                    gridColor: Theme.of(context).colorScheme.outlineVariant,
-                    textColor: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
+            const SizedBox(height: 14),
+            if (available) ...[
+              RepaintBoundary(
+                child: _ForceVelocityPlot(current: current, baseline: baseline),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _LegendLine(
+                  _Legend(
                     color: Theme.of(context).colorScheme.primary,
                     label: 'This match',
                   ),
-                  const SizedBox(width: 20),
-                  _LegendLine(
+                  const SizedBox(width: 18),
+                  _Legend(
                     color: Theme.of(context).colorScheme.outline,
-                    label: analysis.baselineCurve.isEmpty
-                        ? 'Personal baseline forming'
-                        : 'Personal baseline',
+                    label: baseline.length >= 2
+                        ? 'Personal baseline'
+                        : 'Baseline forming',
                     dashed: true,
                   ),
                 ],
               ),
-            ],
-            if (available) ...[
               const SizedBox(height: 16),
               Text(
                 'What this video shows',
@@ -92,12 +77,21 @@ class ForceVelocityChart extends StatelessWidget {
                       .withValues(alpha: .45),
                   borderRadius: BorderRadius.circular(14),
                 ),
+                child: Text(_summary(analysis)),
+              ),
+            ] else
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(14),
+                ),
                 child: Text(
-                  analysis.comparisonSummary ??
-                      'This match identified ${analysis.events.length} valid sprint accelerations.',
+                  analysis.events.isEmpty
+                      ? 'No valid sprint acceleration was identified in this video.'
+                      : '${analysis.events.length} sprint acceleration${analysis.events.length == 1 ? '' : 's'} found. A curve needs at least two usable speed points.',
                 ),
               ),
-            ],
             const SizedBox(height: 16),
             FilledButton.icon(
               key: const Key('view-all-sprint-events-button'),
@@ -110,35 +104,198 @@ class ForceVelocityChart extends StatelessWidget {
       ),
     );
   }
+
+  static List<ForceVelocityCurvePoint> _validPoints(
+    List<ForceVelocityCurvePoint> source,
+  ) {
+    final points =
+        source
+            .where(
+              (point) =>
+                  point.velocityMps.isFinite &&
+                  point.forceNPerKg.isFinite &&
+                  point.velocityMps >= 0 &&
+                  point.forceNPerKg >= 0,
+            )
+            .toList(growable: false)
+          ..sort((a, b) => a.velocityMps.compareTo(b.velocityMps));
+    return points.length <= 40
+        ? points
+        : points.take(40).toList(growable: false);
+  }
+
+  static String _summary(ForceVelocityAnalysis analysis) {
+    final supplied = analysis.comparisonSummary?.trim();
+    if (supplied != null && supplied.isNotEmpty && supplied.length <= 220) {
+      return supplied;
+    }
+    return '${analysis.events.length} valid sprint acceleration${analysis.events.length == 1 ? '' : 's'} identified in this match.';
+  }
 }
 
-class _Unavailable extends StatelessWidget {
-  const _Unavailable({required this.analysis});
-  final ForceVelocityAnalysis analysis;
+class _ForceVelocityPlot extends StatelessWidget {
+  const _ForceVelocityPlot({required this.current, required this.baseline});
+
+  final List<ForceVelocityCurvePoint> current;
+  final List<ForceVelocityCurvePoint> baseline;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: Theme.of(context).colorScheme.errorContainer,
-      borderRadius: BorderRadius.circular(14),
-    ),
-    child: Text(
-      analysis.events.isEmpty
-          ? 'No valid sprint acceleration was identified in this video.'
-          : '${analysis.events.length} valid sprint acceleration${analysis.events.length == 1 ? '' : 's'} found. '
-                'More evidence is needed to draw a reliable curve.',
-      style: const TextStyle(fontWeight: FontWeight.w600),
-    ),
-  );
+  Widget build(BuildContext context) {
+    final all = <ForceVelocityCurvePoint>[...current, ...baseline];
+    final xMin = all.map((point) => point.velocityMps).reduce(math.min);
+    final rawXMax = all.map((point) => point.velocityMps).reduce(math.max);
+    final xMax = rawXMax > xMin ? rawXMax : xMin + 1;
+    final yMax = math.max(
+      1.0,
+      all.map((point) => point.forceNPerKg).reduce(math.max) * 1.15,
+    );
+    final colors = Theme.of(context).colorScheme;
+
+    return SizedBox(
+      key: const Key('force-velocity-chart'),
+      height: 220,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Force (N/kg)', style: Theme.of(context).textTheme.labelSmall),
+          const SizedBox(height: 4),
+          Expanded(
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 34,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(yMax.toStringAsFixed(1)),
+                      Text((yMax / 2).toStringAsFixed(1)),
+                      const Text('0'),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      Offset position(ForceVelocityCurvePoint point) => Offset(
+                        (point.velocityMps - xMin) /
+                            (xMax - xMin) *
+                            constraints.maxWidth,
+                        constraints.maxHeight -
+                            point.forceNPerKg / yMax * constraints.maxHeight,
+                      );
+                      final currentOffsets = current.map(position).toList();
+                      final baselineOffsets = baseline.map(position).toList();
+                      return ClipRect(
+                        child: Stack(
+                          children: [
+                            for (final fraction in const [0.0, .5, 1.0])
+                              Positioned(
+                                left: 0,
+                                right: 0,
+                                top: constraints.maxHeight * fraction,
+                                child: Container(
+                                  height: 1,
+                                  color: colors.outlineVariant,
+                                ),
+                              ),
+                            ..._lineWidgets(
+                              baselineOffsets,
+                              colors.outline,
+                              dashed: true,
+                            ),
+                            ..._lineWidgets(currentOffsets, colors.primary),
+                            for (final point in currentOffsets)
+                              Positioned(
+                                left: point.dx - 3,
+                                top: point.dy - 3,
+                                child: Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: BoxDecoration(
+                                    color: colors.primary,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 40, top: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(xMin.toStringAsFixed(1)),
+                Text(
+                  'Speed (m/s)',
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+                Text(xMax.toStringAsFixed(1)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static List<Widget> _lineWidgets(
+    List<Offset> points,
+    Color color, {
+    bool dashed = false,
+  }) {
+    final widgets = <Widget>[];
+    for (var index = 1; index < points.length; index++) {
+      final start = points[index - 1];
+      final end = points[index];
+      final delta = end - start;
+      final length = delta.distance;
+      if (!length.isFinite || length <= 0) continue;
+      final pieces = dashed ? math.max(1, (length / 12).floor()) : 1;
+      for (var piece = 0; piece < pieces; piece++) {
+        if (dashed && piece.isOdd) continue;
+        final from = Offset.lerp(start, end, piece / pieces)!;
+        final to = Offset.lerp(start, end, (piece + 1) / pieces)!;
+        final segment = to - from;
+        widgets.add(
+          Positioned(
+            left: from.dx,
+            top: from.dy - 1.25,
+            child: Transform.rotate(
+              alignment: Alignment.centerLeft,
+              angle: math.atan2(segment.dy, segment.dx),
+              child: Container(
+                width: segment.distance,
+                height: 2.5,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+    return widgets;
+  }
 }
 
-class _LegendLine extends StatelessWidget {
-  const _LegendLine({
+class _Legend extends StatelessWidget {
+  const _Legend({
     required this.color,
     required this.label,
     this.dashed = false,
   });
+
   final Color color;
   final String label;
   final bool dashed;
@@ -149,172 +306,18 @@ class _LegendLine extends StatelessWidget {
     children: [
       SizedBox(
         width: 24,
-        height: 8,
-        child: CustomPaint(painter: _LegendPainter(color, dashed)),
+        child: Row(
+          children: [
+            Expanded(child: Container(height: 2.5, color: color)),
+            if (dashed) ...[
+              const SizedBox(width: 4),
+              Expanded(child: Container(height: 2.5, color: color)),
+            ],
+          ],
+        ),
       ),
       const SizedBox(width: 6),
       Text(label, style: Theme.of(context).textTheme.bodySmall),
     ],
   );
-}
-
-class _LegendPainter extends CustomPainter {
-  const _LegendPainter(this.color, this.dashed);
-  final Color color;
-  final bool dashed;
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round;
-    if (!dashed) {
-      canvas.drawLine(
-        Offset(0, size.height / 2),
-        Offset(size.width, size.height / 2),
-        paint,
-      );
-      return;
-    }
-    for (double x = 0; x < size.width; x += 7) {
-      canvas.drawLine(
-        Offset(x, size.height / 2),
-        Offset(math.min(x + 4, size.width), size.height / 2),
-        paint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _LegendPainter oldDelegate) =>
-      oldDelegate.color != color || oldDelegate.dashed != dashed;
-}
-
-class _ForceVelocityPainter extends CustomPainter {
-  const _ForceVelocityPainter({
-    required this.current,
-    required this.baseline,
-    required this.currentColor,
-    required this.baselineColor,
-    required this.gridColor,
-    required this.textColor,
-  });
-
-  final List<ForceVelocityCurvePoint> current;
-  final List<ForceVelocityCurvePoint> baseline;
-  final Color currentColor;
-  final Color baselineColor;
-  final Color gridColor;
-  final Color textColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const left = 48.0, top = 14.0, right = 12.0, bottom = 42.0;
-    final plot = Rect.fromLTRB(
-      left,
-      top,
-      size.width - right,
-      size.height - bottom,
-    );
-    if (plot.width <= 0 || plot.height <= 0 || current.length < 2) return;
-
-    final xMin = baseline.isEmpty
-        ? current.first.velocityMps
-        : baseline.first.velocityMps;
-    final xMax = baseline.isEmpty
-        ? current.last.velocityMps
-        : baseline.last.velocityMps;
-    if (xMax <= xMin) return;
-    final visibleCurrent = current
-        .where(
-          (point) =>
-              point.velocityMps >= xMin - .001 &&
-              point.velocityMps <= xMax + .001,
-        )
-        .toList();
-    final allVisible = <ForceVelocityCurvePoint>[
-      ...visibleCurrent,
-      ...baseline,
-    ];
-    if (allVisible.isEmpty) return;
-    final yMax = math.max(
-      1.0,
-      allVisible.map((point) => point.forceNPerKg).reduce(math.max) * 1.18,
-    );
-    final grid = Paint()
-      ..color = gridColor
-      ..strokeWidth = 1;
-    for (var index = 0; index <= 4; index++) {
-      final y = plot.bottom - plot.height * index / 4;
-      canvas.drawLine(Offset(plot.left, y), Offset(plot.right, y), grid);
-      _label(canvas, (yMax * index / 4).toStringAsFixed(1), Offset(4, y - 7));
-    }
-    canvas.drawLine(plot.bottomLeft, plot.topLeft, grid);
-    canvas.drawLine(plot.bottomLeft, plot.bottomRight, grid);
-    _label(canvas, 'N/kg', const Offset(4, 0));
-    _label(
-      canvas,
-      xMin.toStringAsFixed(1),
-      Offset(plot.left - 7, plot.bottom + 9),
-    );
-    _label(
-      canvas,
-      xMax.toStringAsFixed(1),
-      Offset(plot.right - 15, plot.bottom + 9),
-    );
-    _label(
-      canvas,
-      'Speed (m/s)',
-      Offset(plot.center.dx - 32, plot.bottom + 25),
-    );
-
-    Offset point(ForceVelocityCurvePoint value) => Offset(
-      plot.left + (value.velocityMps - xMin) / (xMax - xMin) * plot.width,
-      plot.bottom - value.forceNPerKg / yMax * plot.height,
-    );
-    _drawSolid(canvas, visibleCurrent.map(point).toList(), currentColor);
-    if (baseline.length >= 2) {
-      _drawDashed(canvas, baseline.map(point).toList(), baselineColor);
-    }
-  }
-
-  void _drawSolid(Canvas canvas, List<Offset> points, Color color) {
-    if (points.length < 2) return;
-    canvas.drawPath(
-      Path()..addPolygon(points, false),
-      Paint()
-        ..color = color
-        ..strokeWidth = 3
-        ..strokeCap = StrokeCap.round
-        ..style = PaintingStyle.stroke,
-    );
-  }
-
-  void _drawDashed(Canvas canvas, List<Offset> points, Color color) {
-    if (points.length < 2) return;
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round;
-    for (var index = 1; index < points.length; index++) {
-      if (index.isOdd) canvas.drawLine(points[index - 1], points[index], paint);
-    }
-  }
-
-  void _label(Canvas canvas, String text, Offset offset) {
-    final painter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(fontSize: 10, color: textColor),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    painter.paint(canvas, offset);
-  }
-
-  @override
-  bool shouldRepaint(covariant _ForceVelocityPainter oldDelegate) =>
-      oldDelegate.current != current ||
-      oldDelegate.baseline != baseline ||
-      oldDelegate.currentColor != currentColor;
 }
