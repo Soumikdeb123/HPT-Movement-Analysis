@@ -572,12 +572,9 @@ class YuchenPrototypeTrackingEngine:
 
         # Pixel fallback for a fixed rear-court camera. The lower player is near;
         # the upper player is far. Ignore the upper stands before ranking.
-        visible_court = [
-            detection
-            for detection in detections
-            if detection.foot_position[1] >= frame_height * 0.45
-        ]
-        pool = visible_court or list(detections)
+        # Do not discard upper-frame detections here: the legitimate
+        # far-court player can appear above 45% of the frame height.
+        pool = list(detections)
         selector = max if target_player == "near" else min
         return [selector(pool, key=lambda detection: detection.foot_position[1])]
 

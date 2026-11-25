@@ -62,3 +62,38 @@ def test_fixed_camera_fallback_keeps_only_selected_court_side():
 
     assert near == [near_player]
     assert far == [far_player]
+
+
+def test_far_player_pixel_fallback_keeps_upper_court_player():
+    """Far-court selection must not discard a legitimate upper-frame player."""
+    from hpt_tracking.tracking_engine import Detection, YuchenPrototypeTrackingEngine
+
+    # Representative positions from the real 720p failure:
+    # far player ~220 px, near player ~600 px.
+    far_player = Detection(
+        bbox=(140.0, 160.0, 180.0, 220.0),
+        confidence=0.95,
+    )
+    near_player = Detection(
+        bbox=(130.0, 480.0, 190.0, 600.0),
+        confidence=0.95,
+    )
+
+    detections = [near_player, far_player]
+
+    selected_far = YuchenPrototypeTrackingEngine._select_target_detection(
+        detections,
+        target_player="far",
+        frame_height=720,
+        calibration=None,
+    )
+
+    selected_near = YuchenPrototypeTrackingEngine._select_target_detection(
+        detections,
+        target_player="near",
+        frame_height=720,
+        calibration=None,
+    )
+
+    assert selected_far == [far_player]
+    assert selected_near == [near_player]
