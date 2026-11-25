@@ -188,7 +188,7 @@ class CourtDetector:
         )
         polygon_area = abs(float(cv2.contourArea(corners)))
         points_inside_extended_frame = all(
-            -0.05 * width <= x <= 1.05 * width
+            -0.20 * width <= x <= 1.20 * width
             and 0.05 * height <= y <= 1.05 * height
             for x, y in corners
         )
@@ -197,7 +197,7 @@ class CourtDetector:
             and far_width >= 0.08 * width
             and near_width >= 0.45 * width
             and near_width > far_width * 1.1
-            and vertical_span >= 0.2 * height
+            and vertical_span >= 0.18 * height
             and polygon_area >= 0.12 * width * height
         )
 
