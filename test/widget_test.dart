@@ -61,13 +61,12 @@ void main() {
 
     expect(find.byKey(const Key('analysis-results')), findsOneWidget);
     expect(find.text('Movement analysis results'), findsOneWidget);
-    expect(find.text('Active-play tracking'), findsOneWidget);
-    expect(find.text('80 of 90 frames • 89%'), findsOneWidget);
+    expect(find.text('Tracking coverage'), findsOneWidget);
+    expect(find.text('80 of 100 frames • 80%'), findsOneWidget);
     expect(find.text('500 m'), findsOneWidget);
     expect(find.text('Acceleration'), findsNothing);
     expect(find.text('Deceleration'), findsNothing);
     expect(find.text('Direction changes'), findsOneWidget);
-    expect(find.text('Limited evidence'), findsOneWidget);
     expect(find.text('Heatmap'), findsNothing);
     expect(find.text('Directional movement'), findsOneWidget);
     expect(find.text('Pixel effort index (demo)'), findsNothing);
@@ -75,12 +74,11 @@ void main() {
       find.text('Overall effort (experimental movement load)'),
       findsOneWidget,
     );
-    expect(find.text('What this video shows'), findsOneWidget);
     expect(find.text('Low-speed acceleration'), findsNothing);
     expect(find.text('Mid-speed acceleration'), findsNothing);
     expect(find.text('High-speed acceleration'), findsNothing);
     expect(find.text('3. Review prototype scope'), findsNothing);
-    expect(find.text('Match Sprint Force–Velocity'), findsOneWidget);
+    expect(find.text('Movement Force–Velocity'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.byKey(const Key('force-velocity-chart')).first,
       400,
@@ -88,10 +86,23 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('force-velocity-chart')), findsWidgets);
+    expect(find.text('Match performance'), findsOneWidget);
     expect(find.text('This match'), findsOneWidget);
     expect(find.text('Personal baseline'), findsOneWidget);
     expect(
-      find.byKey(const Key('view-all-sprint-events-button')),
+      tester.widget<Text>(find.byKey(const Key('force-velocity-x-max'))).data,
+      '3.0',
+    );
+    final infoButton = find.byKey(const Key('force-velocity-info-button'));
+    expect(infoButton, findsOneWidget);
+    await tester.tap(infoButton);
+    await tester.pumpAndSettle();
+    expect(find.text('When performance is above usual'), findsOneWidget);
+    expect(find.text('When performance is below usual'), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('review-key-movements-button')),
       findsOneWidget,
     );
     final advancedExport = find.text('Advanced data export');
@@ -100,7 +111,8 @@ void main() {
     await tester.tap(advancedExport);
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('export-csv-button')), findsOneWidget);
-    expect(find.byKey(const Key('export-json-button')), findsOneWidget);
+    expect(find.byKey(const Key('export-json-button')), findsNothing);
+    expect(find.text('Export JSON'), findsNothing);
     expect(find.byKey(const Key('export-pdf-button')), findsOneWidget);
     expect(find.byKey(const Key('export-video-button')), findsOneWidget);
 
@@ -199,17 +211,12 @@ class _ImmediateGateway implements AnalysisGateway {
           'lengthMeters': 23.77,
         },
         'video': {'processedFrames': 100},
-        'activePlay': {
-          'status': 'accepted',
-          'confidence': 0.86,
-          'activeFrames': 90,
-        },
         'selectedTrackId': '0',
         'players': [
           {
             'trackId': '0',
             'trackedFrames': 80,
-            'coverageFrameCount': 90,
+            'coverageFrameCount': 100,
             'overallEffort': {
               'method': 'metric_motion_load_v1',
               'validSeconds': 12,
@@ -253,7 +260,7 @@ class _ImmediateGateway implements AnalysisGateway {
               'peakBrakingForceN': 90,
               'note': 'Estimated from entered body mass and video-derived acceleration.',
               'quality': {
-                'status': 'limited',
+                'status': 'available',
                 'trackingCoverage': 0.8,
                 'calibrationConfidence': 0.96,
                 'validEventCount': 4,
@@ -267,10 +274,12 @@ class _ImmediateGateway implements AnalysisGateway {
               ],
               'baselineCurve': [
                 {'velocityMps': 1.0, 'forceNPerKg': 1.7},
-                {'velocityMps': 2.0, 'forceNPerKg': 1.4},
-                {'velocityMps': 3.0, 'forceNPerKg': 1.1},
+                {'velocityMps': 2.2, 'forceNPerKg': 1.3},
               ],
-              'comparisonSummary': 'This match identified 1 valid sprint acceleration and was close to the personal baseline.',
+              'comparisonSummary': 'Below usual at 1.8–2.4 m/s',
+              'comparisonDetail':
+                  'At this speed, Jordan accelerated less strongly than usual.',
+              'comparisonStatus': 'below',
               'events': [
                 {
                   'eventId': 'event-1',

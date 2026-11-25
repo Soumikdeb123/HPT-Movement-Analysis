@@ -4,7 +4,7 @@ from zipfile import ZipFile
 import pytest
 
 from hpt_tracking.metric_motion import analyse_metric_motion
-from hpt_tracking.reports import save_reports, runs, REPORT_FILES
+from hpt_tracking.reports import save_reports, runs, REPORT_FILES, REPORT_ARCHIVE_FILES
 
 
 def test_metric_reports_match_integrated_distance(tmp_path):
@@ -18,7 +18,8 @@ def test_metric_reports_match_integrated_distance(tmp_path):
     for filename in REPORT_FILES:
         assert (tmp_path / filename).stat().st_size > 0
     with ZipFile(tmp_path / 'reports.zip') as archive:
-        assert set(archive.namelist()) == REPORT_FILES - {'reports.zip'}
+        assert set(archive.namelist()) == REPORT_ARCHIVE_FILES
+        assert 'analysis.json' not in archive.namelist()
     assert json.loads((tmp_path / 'analysis.json').read_text(encoding='utf-8'))['reportStatus'] == 'metric'
 
 

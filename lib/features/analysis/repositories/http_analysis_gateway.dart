@@ -64,11 +64,6 @@ class HttpAnalysisGateway implements AnalysisGateway {
     if (request.athleteMassKg case final double mass) {
       createRequest.fields['athlete_mass_kg'] = mass.toString();
     }
-    if (request.courtCorners case final corners?) {
-      createRequest.fields['court_corners'] = jsonEncode(
-        corners.map((point) => point.toJson()).toList(),
-      );
-    }
     http.StreamedResponse createResponse;
     try {
       createResponse = await _client

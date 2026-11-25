@@ -66,7 +66,8 @@ class PlayerSelectorCard extends StatelessWidget {
                   DropdownMenuItem(
                     value: player.id,
                     child: Text(
-                      '${player.name} · ${player.analysisCount} analyses',
+                      '${player.name} · ${player.analysisCount} '
+                      '${player.analysisCount == 1 ? 'analysis' : 'analyses'}',
                     ),
                   ),
               ],

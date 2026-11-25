@@ -256,16 +256,23 @@ class CourtDetector:
                     segment_fractions = self._court_model_segment_fractions(
                         support, corners
                     )
-                    # A tennis court has four long parallel lines: two doubles
-                    # sidelines and two singles sidelines.  Requiring support
-                    # from several of them stops an asymmetric fit that uses a
-                    # singles line on one side and a doubles line on the other.
+                    # A tennis court has four long parallel lines: an outer
+                    # doubles sideline and an inner singles sideline on each
+                    # side.  Validate those lines as left/right pairs.  Merely
+                    # requiring three of the four allowed an asymmetric fit to
+                    # use the singles sideline as the outer boundary on one
+                    # side while using the doubles sideline on the other.  That
+                    # produces a plausible-looking but metrically false map.
                     longitudinal = segment_fractions[2:6]
                     cross_court = (
                         segment_fractions[0:2] + segment_fractions[6:8]
                     )
+                    left_pair = (longitudinal[0], longitudinal[2])
+                    right_pair = (longitudinal[1], longitudinal[3])
                     if (
                         sorted(longitudinal, reverse=True)[2] < 0.16
+                        or min(left_pair) < 0.10
+                        or min(right_pair) < 0.10
                         or sorted(cross_court, reverse=True)[1] < 0.15
                     ):
                         continue

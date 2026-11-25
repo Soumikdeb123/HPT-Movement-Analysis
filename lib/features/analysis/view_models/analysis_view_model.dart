@@ -34,7 +34,6 @@ class AnalysisViewModel extends ChangeNotifier {
   TargetPlayerPosition targetPlayer = TargetPlayerPosition.nearCourt;
   PlayerProfile? player;
   double? athleteMassKg;
-  List<NormalizedCourtPoint>? courtCorners;
   String? massError;
   AnalysisCancellationToken? _cancellationToken;
   int _operationGeneration = 0;
@@ -68,7 +67,6 @@ class AnalysisViewModel extends ChangeNotifier {
   void restoreSelectedVideo(SelectedVideo video) {
     if (isProcessing || isSelectingVideo || isClearingResult) return;
     selectedVideo = video;
-    courtCorners = null;
     result = null;
     validatedVideoMetadata = null;
     progress = 0;
@@ -96,7 +94,6 @@ class AnalysisViewModel extends ChangeNotifier {
       }
 
       selectedVideo = video;
-      courtCorners = null;
       result = null;
       validatedVideoMetadata = null;
       progress = 0;
@@ -128,12 +125,6 @@ class AnalysisViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updateCourtCorners(List<NormalizedCourtPoint>? value) {
-    if (isProcessing || isSelectingVideo || isClearingResult) return;
-    courtCorners = value == null ? null : List.unmodifiable(value);
-    notifyListeners();
-  }
-
   Future<void> startAnalysis() async {
     final video = selectedVideo;
     final selectedPlayer = player;
@@ -160,7 +151,6 @@ class AnalysisViewModel extends ChangeNotifier {
           playerName: selectedPlayer.name,
           targetPlayer: targetPlayer,
           athleteMassKg: massKg,
-          courtCorners: courtCorners,
         ),
         onVideoValidated: (metadata) {
           if (operationGeneration != _operationGeneration) return;
@@ -247,7 +237,6 @@ class AnalysisViewModel extends ChangeNotifier {
     validatedVideoMetadata = null;
     errorMessage = null;
     targetPlayer = TargetPlayerPosition.nearCourt;
-    courtCorners = null;
     // The mass field remains mounted after clearing a result, so retain its value.
   }
 

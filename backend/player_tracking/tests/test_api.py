@@ -40,13 +40,10 @@ class FakeTrackingEngine:
         cancellation_callback,
         target_player,
         athlete_mass_kg,
-        court_corners=None,
     ):
         assert input_path.read_bytes() == b"test-video"
         assert target_player == "near"
         assert athlete_mass_kg == 75.0
-        if court_corners is not None:
-            assert court_corners == [[0.3, 0.2], [0.7, 0.2], [0.95, 0.9], [0.05, 0.9]]
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "annotated.mp4").write_bytes(b"annotated")
         progress_callback(0.5)
@@ -72,7 +69,6 @@ class BlockingTrackingEngine:
         cancellation_callback,
         target_player,
         athlete_mass_kg,
-        court_corners=None,
     ):
         self.started.set()
         while not cancellation_callback():
@@ -91,14 +87,11 @@ def test_upload_poll_download_and_delete(tmp_path):
     with TestClient(app) as client:
         response = client.post(
             "/api/analyses",
-            data={
-                "athlete_mass_kg": "75",
-                "court_corners": "[[0.3,0.2],[0.7,0.2],[0.95,0.9],[0.05,0.9]]",
-            },
+            data={"athlete_mass_kg": "75"},
             files={"video": ("example.mp4", b"test-video", "video/mp4")},
         )
         assert response.status_code == 202
-        assert response.json()["courtCorners"][0] == [0.3, 0.2]
+        assert "courtCorners" not in response.json()
         assert response.json()["inputVideo"]["codecName"] == "H.264 (AVC)"
         analysis_id = response.json()["analysisId"]
 
@@ -120,8 +113,11 @@ def test_upload_poll_download_and_delete(tmp_path):
         assert video_response.status_code == 200
         assert video_response.content == b"annotated"
         for filename in ("movement_trajectories.png", "speed_deceleration.png",
-                         "analysis.json", "coach_report.pdf", "reports.zip"):
+                         "coach_report.pdf", "reports.zip"):
             assert client.get(f"/api/analyses/{analysis_id}/reports/{filename}").status_code == 200
+        assert client.get(
+            f"/api/analyses/{analysis_id}/reports/analysis.json"
+        ).status_code == 404
         assert client.get(f"/api/analyses/{analysis_id}/reports/input.mp4").status_code == 404
         assert snapshot['result']['reportImages'][0]['url'].endswith('/reports/movement_trajectories.png')
 

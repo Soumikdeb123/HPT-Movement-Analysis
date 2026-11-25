@@ -22,7 +22,6 @@ class AnalysisJob:
     player_name: Optional[str]
     target_player: str
     athlete_mass_kg: Optional[float]
-    court_corners: Optional[list]
     input_video: Dict
     owner: str = "local-test"
     created_at: str = field(default_factory=utc_now)
@@ -40,7 +39,6 @@ class AnalysisJob:
             "progress": self.progress, "originalFilename": self.original_filename,
             "playerId": self.player_id, "playerName": self.player_name,
             "targetPlayer": self.target_player, "athleteMassKg": self.athlete_mass_kg,
-            "courtCorners": self.court_corners,
             "inputVideo": dict(self.input_video), "result": self.result,
             "error": self.error, "createdAt": self.created_at,
             "completedAt": self.completed_at,
@@ -87,7 +85,7 @@ class AnalysisJobManager:
     def create_job(self, input_path: Path, original_filename: str,
                    player_id: str, player_name: str,
                    target_player: str, athlete_mass_kg: Optional[float],
-                   court_corners: Optional[list], input_video: Dict,
+                   input_video: Dict,
                    owner: str = "local-test") -> AnalysisJob:
         job_id = uuid4().hex
         job_root = self.runtime_dir / job_id
@@ -100,7 +98,6 @@ class AnalysisJobManager:
                           output_dir=job_root / "results", original_filename=original_filename,
                            player_id=player_id, player_name=player_name,
                            target_player=target_player, athlete_mass_kg=athlete_mass_kg,
-                           court_corners=court_corners,
                            input_video=dict(input_video), owner=owner)
         try:
             self.history.save(job.record())
@@ -129,8 +126,7 @@ class AnalysisJobManager:
             original_filename=record["originalFilename"],
             player_id=record.get("playerId"), player_name=record.get("playerName"),
             target_player=record["targetPlayer"],
-            athlete_mass_kg=record.get("athleteMassKg"),
-            court_corners=record.get("courtCorners"), input_video=record["inputVideo"],
+            athlete_mass_kg=record.get("athleteMassKg"), input_video=record["inputVideo"],
             owner=record["owner"], created_at=record["createdAt"],
             completed_at=record.get("completedAt"), status=record["status"],
             progress=record["progress"], result=record.get("result"), error=record.get("error"))
@@ -160,6 +156,20 @@ class AnalysisJobManager:
                 job.cancel_event.set()
         return job
 
+    def set_movement_moment_excluded(self, owner: str, job_id: str,
+                                     event_id: str, excluded: bool) -> Optional[AnalysisJob]:
+        record = self.history.set_movement_moment_excluded(
+            owner, job_id, event_id, excluded
+        )
+        if record is None:
+            return None
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        job.result = record.get("result")
+        save_reports(job.result, job.output_dir)
+        return job
+
     def shutdown(self) -> None:
         # Stop workers before another process opens this history store.
         with self._jobs_lock:
@@ -183,8 +193,7 @@ class AnalysisJobManager:
                 input_path=job.input_path, output_dir=job.output_dir,
                 progress_callback=update_progress,
                 cancellation_callback=job.cancel_event.is_set,
-                target_player=job.target_player, athlete_mass_kg=job.athlete_mass_kg,
-                court_corners=job.court_corners)
+                target_player=job.target_player, athlete_mass_kg=job.athlete_mass_kg)
             result["playerId"] = job.player_id
             result["playerName"] = job.player_name
             if job.cancel_event.is_set():

@@ -210,6 +210,7 @@ class ForceVelocitySample {
 class ForceVelocityEvent {
   const ForceVelocityEvent({
     required this.id,
+    this.label = 'Key movement',
     required this.startTimeSeconds,
     required this.endTimeSeconds,
     required this.seekStartSeconds,
@@ -223,11 +224,13 @@ class ForceVelocityEvent {
     required this.startY,
     required this.endX,
     required this.endY,
+    this.excluded = false,
   });
 
   factory ForceVelocityEvent.fromJson(Map<String, dynamic> json) =>
       ForceVelocityEvent(
         id: json['eventId'] as String? ?? 'event',
+        label: json['label'] as String? ?? 'Key movement',
         startTimeSeconds: _doubleFromJson(json['startTimeSeconds']) ?? 0,
         endTimeSeconds: _doubleFromJson(json['endTimeSeconds']) ?? 0,
         seekStartSeconds: _doubleFromJson(json['videoSeekStartSeconds']) ?? 0,
@@ -241,9 +244,11 @@ class ForceVelocityEvent {
         startY: _doubleFromJson(json['startY']) ?? 0,
         endX: _doubleFromJson(json['endX']) ?? 0,
         endY: _doubleFromJson(json['endY']) ?? 0,
+        excluded: json['excluded'] == true,
       );
 
   final String id;
+  final String label;
   final double startTimeSeconds;
   final double endTimeSeconds;
   final double seekStartSeconds;
@@ -257,6 +262,7 @@ class ForceVelocityEvent {
   final double startY;
   final double endX;
   final double endY;
+  final bool excluded;
 }
 
 class ForceVelocityCurvePoint {
@@ -377,8 +383,13 @@ class ForceVelocityAnalysis {
     this.algorithmVersion,
     this.baselineAnalysisCount = 0,
     this.comparisonSummary,
+    this.comparisonDetail,
+    this.comparisonStatus = 'no_baseline',
+    this.comparisonVelocityMinMps,
+    this.comparisonVelocityMaxMps,
     this.recommendedEventIds = const [],
     this.massKg,
+    this.peakEstimatedPropulsionN,
     this.maximumVelocityMps,
     this.peakPropulsiveForceN,
     this.peakBrakingForceN,
@@ -396,8 +407,13 @@ class ForceVelocityAnalysis {
       algorithmVersion = null,
       baselineAnalysisCount = 0,
       comparisonSummary = null,
+      comparisonDetail = null,
+      comparisonStatus = 'no_baseline',
+      comparisonVelocityMinMps = null,
+      comparisonVelocityMaxMps = null,
       recommendedEventIds = const [],
       massKg = null,
+      peakEstimatedPropulsionN = null,
       maximumVelocityMps = null,
       peakPropulsiveForceN = null,
       peakBrakingForceN = null,
@@ -460,10 +476,21 @@ class ForceVelocityAnalysis {
       algorithmVersion: json['algorithmVersion'] as String?,
       baselineAnalysisCount: _intFromJson(json['baselineAnalysisCount']) ?? 0,
       comparisonSummary: json['comparisonSummary'] as String?,
+      comparisonDetail: json['comparisonDetail'] as String?,
+      comparisonStatus: json['comparisonStatus'] as String? ?? 'no_baseline',
+      comparisonVelocityMinMps: _doubleFromJson(
+        json['comparisonVelocityMinMps'],
+      ),
+      comparisonVelocityMaxMps: _doubleFromJson(
+        json['comparisonVelocityMaxMps'],
+      ),
       recommendedEventIds: (json['recommendedEventIds'] as List? ?? const [])
           .whereType<String>()
           .toList(growable: false),
       massKg: _doubleFromJson(json['massKg']),
+      peakEstimatedPropulsionN: _doubleFromJson(
+        json['peakEstimatedPropulsionN'],
+      ),
       maximumVelocityMps: _doubleFromJson(json['maximumVelocityMps']),
       peakPropulsiveForceN: _doubleFromJson(json['peakPropulsiveForceN']),
       peakBrakingForceN: _doubleFromJson(json['peakBrakingForceN']),
@@ -481,12 +508,30 @@ class ForceVelocityAnalysis {
   final String? algorithmVersion;
   final int baselineAnalysisCount;
   final String? comparisonSummary;
+  final String? comparisonDetail;
+  final String comparisonStatus;
+  final double? comparisonVelocityMinMps;
+  final double? comparisonVelocityMaxMps;
   final List<String> recommendedEventIds;
   final double? massKg;
+  final double? peakEstimatedPropulsionN;
   final double? maximumVelocityMps;
   final double? peakPropulsiveForceN;
   final double? peakBrakingForceN;
   final String? note;
+
+  double? get resolvedPeakEstimatedPropulsionN {
+    if (peakEstimatedPropulsionN != null) return peakEstimatedPropulsionN;
+    if (massKg == null || massKg! <= 0 || currentCurve.isEmpty) return null;
+    final peak = currentCurve
+        .map((point) => point.forceNPerKg)
+        .where((value) => value.isFinite && value >= 0)
+        .fold<double?>(
+          null,
+          (best, value) => best == null || value > best ? value : best,
+        );
+    return peak == null ? null : peak * massKg!;
+  }
 }
 
 class DirectionChangesMetric {

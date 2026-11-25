@@ -5,6 +5,7 @@ import 'package:video_player/video_player.dart';
 
 import '../../auth/repositories/auth_repository.dart';
 import '../../history/views/analysis_history_page.dart';
+import '../../history/repositories/analysis_history_repository.dart';
 import '../../players/models/player_profile.dart';
 import '../../players/repositories/player_repository.dart';
 import '../../players/views/player_selector_card.dart';
@@ -43,7 +44,14 @@ class _AnalysisPageState extends State<AnalysisPage> {
     final expired = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => const AnalysisHistoryPage()),
     );
-    if (mounted && expired == true) widget.onSignOut?.call();
+    if (!mounted) return;
+    if (expired == true) {
+      widget.onSignOut?.call();
+      return;
+    }
+    // A history entry may have been deleted while this page was covered.
+    // Reload the profiles so their analysis counts update immediately.
+    await _loadPlayers();
   }
 
   late final AnalysisGateway _gateway;
@@ -128,6 +136,13 @@ class _AnalysisPageState extends State<AnalysisPage> {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(error.toString())));
     }
+  }
+
+  Future<void> _startAnalysis() async {
+    await viewModel.startAnalysis();
+    if (!mounted || viewModel.status != AnalysisStatus.completed) return;
+    // Completing an analysis changes the selected player's saved count.
+    await _loadPlayers();
   }
 
   void _selectPlayer(PlayerProfile player) {
@@ -232,12 +247,6 @@ class _AnalysisPageState extends State<AnalysisPage> {
                           style: Theme.of(context).textTheme.headlineMedium
                               ?.copyWith(fontWeight: FontWeight.bold),
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Select a fixed-camera tennis video and send it to '
-                          'the configured movement analysis service.',
-                          style: Theme.of(context).textTheme.bodyLarge,
-                        ),
                         const SizedBox(height: 24),
                         PlayerSelectorCard(
                           players: _players,
@@ -266,9 +275,7 @@ class _AnalysisPageState extends State<AnalysisPage> {
                         const SizedBox(height: 16),
                         FilledButton.icon(
                           key: const Key('start-analysis-button'),
-                          onPressed: viewModel.canStart
-                              ? viewModel.startAnalysis
-                              : null,
+                          onPressed: viewModel.canStart ? _startAnalysis : null,
                           icon: const Icon(Icons.play_arrow),
                           label: const Text('Start analysis'),
                         ),
@@ -349,10 +356,7 @@ class _VideoCard extends StatelessWidget {
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Choose an authorised MP4, MOV, AVI or MKV file. The video is '
-              'sent only to the local analysis service configured for this app.',
-            ),
+            const Text('Choose an authorised MP4, MOV, AVI or MKV file.'),
             const SizedBox(height: 16),
             const _RecordingGuide(),
             const SizedBox(height: 16),
@@ -571,11 +575,6 @@ class _TargetPlayerCard extends StatelessWidget {
               '3. Athlete details',
               style: Theme.of(context).textTheme.titleLarge,
             ),
-            const SizedBox(height: 8),
-            const Text(
-              'For fixed-camera footage, choose the athlete by their '
-              'court side at the start of the video.',
-            ),
             const SizedBox(height: 16),
             SegmentedButton<TargetPlayerPosition>(
               key: const Key('target-player-selector'),
@@ -612,7 +611,6 @@ class _TargetPlayerCard extends StatelessWidget {
                 hintText: 'For example, 75',
                 suffixText: 'kg',
                 border: OutlineInputBorder(),
-                helperText: 'Optional. The primary profile uses N/kg; mass adds an absolute-N estimate.',
                 errorText: viewModel.massError,
               ),
             ),
@@ -703,27 +701,57 @@ class _AnalysisResultsViewState extends State<AnalysisResultsView> {
   final _videoKey = GlobalKey<_AnnotatedVideoCardState>();
   final _exportService = AnalysisExportService();
   bool _exportingPdf = false;
+  late AnalysisResult _result;
+  final _historyRepository = AnalysisHistoryRepository();
 
-  Future<void> _openSprintEvents() async {
-    final url = widget.result.annotatedVideoUrl;
-    final player = widget.result.playerById(widget.result.selectedTrackId);
+  @override
+  void initState() {
+    super.initState();
+    _result = widget.result;
+  }
+
+  @override
+  void didUpdateWidget(covariant AnalysisResultsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.result != widget.result) _result = widget.result;
+  }
+
+  @override
+  void dispose() {
+    _historyRepository.close();
+    super.dispose();
+  }
+
+  Future<void> _openMovementMoments() async {
+    final url = _result.annotatedVideoUrl;
+    final player = _result.playerById(_result.selectedTrackId);
     if (url == null || player == null) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => SprintEventsPage(
+        builder: (_) => MovementMomentsPage(
           videoUrl: url,
           events: player.forceVelocity.events,
           recommendedEventIds: player.forceVelocity.recommendedEventIds,
+          onSetExcluded: (eventId, excluded) async {
+            final saved = await _historyRepository.setMovementMomentExcluded(
+              _result.analysisId,
+              eventId,
+              excluded,
+            );
+            if (saved.result != null && mounted) {
+              setState(() => _result = saved.result!);
+            }
+          },
         ),
       ),
     );
   }
 
   Future<void> _exportPdf() async {
-    if (_exportingPdf || widget.result.coachReportUrl == null) return;
+    if (_exportingPdf || _result.coachReportUrl == null) return;
     setState(() => _exportingPdf = true);
     try {
-      final path = await _exportService.saveCoachReport(widget.result);
+      final path = await _exportService.saveCoachReport(_result);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -744,7 +772,7 @@ class _AnalysisResultsViewState extends State<AnalysisResultsView> {
 
   @override
   Widget build(BuildContext context) {
-    final result = widget.result;
+    final result = _result;
     final player = result.playerById(result.selectedTrackId);
 
     return Card(
@@ -853,7 +881,7 @@ class _AnalysisResultsViewState extends State<AnalysisResultsView> {
                 analysis: player.forceVelocity,
                 onViewEvents: result.annotatedVideoUrl == null
                     ? null
-                    : _openSprintEvents,
+                    : _openMovementMoments,
               ),
             ],
             const SizedBox(height: 16),
@@ -1012,11 +1040,6 @@ class _TrackingCoverageCard extends StatelessWidget {
         player.coverageFrameCount ??
         result.processedFrames ??
         result.inputVideo?.frameCount;
-    final activePlay = result.rawData['activePlay'] as Map?;
-    final usesActivePlay =
-        activePlay != null &&
-        activePlay['activeFrames'] is num &&
-        (activePlay['activeFrames'] as num) > 0;
     final coverage = processedFrames != null && processedFrames > 0
         ? (trackedFrames / processedFrames).clamp(0.0, 1.0)
         : null;
@@ -1035,7 +1058,7 @@ class _TrackingCoverageCard extends StatelessWidget {
                 const Icon(Icons.track_changes_outlined),
                 const SizedBox(width: 12),
                 Text(
-                  usesActivePlay ? 'Active-play tracking' : 'Tracking coverage',
+                  'Tracking coverage',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ],
@@ -1052,9 +1075,7 @@ class _TrackingCoverageCard extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              usesActivePlay
-                  ? 'Player tracking during the match activity found in this video.'
-                  : 'Player tracking across the selected video.',
+              'Player tracking across the selected video.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -1682,9 +1703,6 @@ class _ExportPanelState extends State<_ExportPanel> {
       ExpansionTile(
         tilePadding: EdgeInsets.zero,
         title: const Text('Advanced data export'),
-        subtitle: const Text(
-          'For technical review, not required for coach reports',
-        ),
         children: [
           Wrap(
             spacing: 8,
@@ -1694,21 +1712,9 @@ class _ExportPanelState extends State<_ExportPanel> {
                 key: const Key('export-csv-button'),
                 onPressed: _busy
                     ? null
-                    : () => _save(
-                        () => _service.saveData(widget.result, csv: true),
-                      ),
+                    : () => _save(() => _service.saveCsv(widget.result)),
                 icon: const Icon(Icons.table_chart_outlined),
                 label: const Text('Export CSV'),
-              ),
-              OutlinedButton.icon(
-                key: const Key('export-json-button'),
-                onPressed: _busy
-                    ? null
-                    : () => _save(
-                        () => _service.saveData(widget.result, csv: false),
-                      ),
-                icon: const Icon(Icons.data_object),
-                label: const Text('Export JSON'),
               ),
               if (widget.result.rawData['reportArchiveUrl'] is String)
                 OutlinedButton.icon(
@@ -1717,7 +1723,7 @@ class _ExportPanelState extends State<_ExportPanel> {
                       ? null
                       : () => _save(() => _service.saveReports(widget.result)),
                   icon: const Icon(Icons.folder_zip_outlined),
-                  label: const Text('Save report images + data'),
+                  label: const Text('Download charts and PDF'),
                 ),
             ],
           ),

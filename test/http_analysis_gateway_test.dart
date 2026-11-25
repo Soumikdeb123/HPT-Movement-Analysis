@@ -48,8 +48,7 @@ void main() {
       final body = request.body;
       expect(body, contains('athlete_mass_kg'));
       expect(body, contains('75.0'));
-      expect(body, contains('court_corners'));
-      expect(body, contains('[0.3,0.2]'));
+      expect(body, isNot(contains('court_corners')));
       return http.Response(
         jsonEncode({
           'analysisId': 'job-123',
@@ -117,12 +116,6 @@ void main() {
           playerName: 'Test Player',
           targetPlayer: TargetPlayerPosition.nearCourt,
           athleteMassKg: 75,
-          courtCorners: const [
-            NormalizedCourtPoint(0.3, 0.2),
-            NormalizedCourtPoint(0.7, 0.2),
-            NormalizedCourtPoint(0.95, 0.9),
-            NormalizedCourtPoint(0.05, 0.9),
-          ],
         ),
         onVideoValidated: (metadata) => validatedCodec = metadata.codecName,
         onProgress: (_) {},

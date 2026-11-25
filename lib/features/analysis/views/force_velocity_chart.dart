@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/analysis_result.dart';
 
-/// Lightweight coach-facing sprint profile built without a custom canvas.
+/// Coach-facing session-average movement Force–Velocity profile.
 class ForceVelocityChart extends StatelessWidget {
   const ForceVelocityChart({
     super.key,
@@ -15,11 +15,19 @@ class ForceVelocityChart extends StatelessWidget {
   final ForceVelocityAnalysis analysis;
   final VoidCallback? onViewEvents;
 
+  static const _matchColor = Color(0xFF006C4C);
+  static const _baselineColor = Color(0xFFC44F00);
+
   @override
   Widget build(BuildContext context) {
     final current = _validPoints(analysis.currentCurve);
     final baseline = _validPoints(analysis.baselineCurve);
     final available = current.length >= 2;
+    final hasBaselineComparison = const {
+      'above',
+      'below',
+      'close',
+    }.contains(analysis.comparisonStatus);
 
     return Card(
       color: Theme.of(context).colorScheme.surfaceContainerLow,
@@ -29,17 +37,10 @@ class ForceVelocityChart extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'Match Sprint Force–Velocity',
+              'Movement Force–Velocity',
               style: Theme.of(context).textTheme.titleLarge
                   ?.copyWith(fontWeight: FontWeight.bold),
             ),
-            if (analysis.quality.status == 'limited') ...[
-              const SizedBox(height: 8),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Chip(label: Text('Limited evidence')),
-              ),
-            ],
             const SizedBox(height: 14),
             if (available) ...[
               RepaintBoundary(
@@ -49,36 +50,63 @@ class ForceVelocityChart extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _Legend(
-                    color: Theme.of(context).colorScheme.primary,
-                    label: 'This match',
-                  ),
-                  const SizedBox(width: 18),
-                  _Legend(
-                    color: Theme.of(context).colorScheme.outline,
-                    label: baseline.length >= 2
-                        ? 'Personal baseline'
-                        : 'Baseline forming',
-                    dashed: true,
-                  ),
+                  _Legend(color: _matchColor, label: 'This match'),
+                  if (baseline.length >= 2) ...[
+                    const SizedBox(width: 18),
+                    _Legend(
+                      color: _baselineColor,
+                      label: 'Personal baseline',
+                      dashed: true,
+                    ),
+                  ],
                 ],
               ),
-              const SizedBox(height: 16),
-              Text(
-                'What this video shows',
-                style: Theme.of(context).textTheme.titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer
-                      .withValues(alpha: .45),
-                  borderRadius: BorderRadius.circular(14),
+              if (analysis.resolvedPeakEstimatedPropulsionN
+                  case final peak?) ...[
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      analysis.massKg == null
+                          ? 'Peak estimated propulsion'
+                          : 'Peak estimated propulsion (${analysis.massKg!.toStringAsFixed(0)} kg)',
+                    ),
+                    Text(
+                      '${peak.round()} N',
+                      style: Theme.of(context).textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ],
                 ),
-                child: Text(_summary(analysis)),
+              ],
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Text(
+                    'Match performance',
+                    style: Theme.of(context).textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  if (hasBaselineComparison)
+                    IconButton(
+                      key: const Key('force-velocity-info-button'),
+                      tooltip: 'Possible explanations',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _showPossibleExplanations(context),
+                      icon: const Icon(Icons.info_outline, size: 20),
+                    ),
+                ],
               ),
+              Text(
+                _headline(analysis),
+                style: Theme.of(context).textTheme.titleSmall
+                    ?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              if (_detail(analysis).isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(_detail(analysis)),
+              ],
             ] else
               Container(
                 padding: const EdgeInsets.all(14),
@@ -86,18 +114,16 @@ class ForceVelocityChart extends StatelessWidget {
                   color: Theme.of(context).colorScheme.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Text(
-                  analysis.events.isEmpty
-                      ? 'No valid sprint acceleration was identified in this video.'
-                      : '${analysis.events.length} sprint acceleration${analysis.events.length == 1 ? '' : 's'} found. A curve needs at least two usable speed points.',
+                child: const Text(
+                  'Movement Force–Velocity is unavailable for this video.',
                 ),
               ),
             const SizedBox(height: 16),
             FilledButton.icon(
-              key: const Key('view-all-sprint-events-button'),
+              key: const Key('review-key-movements-button'),
               onPressed: analysis.events.isEmpty ? null : onViewEvents,
               icon: const Icon(Icons.play_circle_outline),
-              label: Text('View all ${analysis.events.length} sprint events'),
+              label: const Text('Review key movement moments'),
             ),
           ],
         ),
@@ -124,12 +150,64 @@ class ForceVelocityChart extends StatelessWidget {
         : points.take(40).toList(growable: false);
   }
 
-  static String _summary(ForceVelocityAnalysis analysis) {
+  static String _headline(ForceVelocityAnalysis analysis) {
     final supplied = analysis.comparisonSummary?.trim();
-    if (supplied != null && supplied.isNotEmpty && supplied.length <= 220) {
-      return supplied;
-    }
-    return '${analysis.events.length} valid sprint acceleration${analysis.events.length == 1 ? '' : 's'} identified in this match.';
+    return supplied == null || supplied.isEmpty
+        ? 'Personal baseline is being built (3 analyses required)'
+        : supplied;
+  }
+
+  static String _detail(ForceVelocityAnalysis analysis) =>
+      analysis.comparisonDetail?.trim() ?? '';
+
+  void _showPossibleExplanations(BuildContext context) {
+    const aboveExplanations = [
+      'The first movement was quicker.',
+      'Acceleration was maintained after the initial movement.',
+      'Chasing and recovery movement was more assertive.',
+      'Body position and push-off may have been more effective.',
+      'Key movements were performed at a higher intensity.',
+    ];
+    const belowExplanations = [
+      'Acceleration was not maintained after the initial movement.',
+      'The player reached position more slowly than usual.',
+      'Body position or footwork may have reduced propulsion.',
+      'Movement performance may have dropped later in the session.',
+      'The movement may have been tactical rather than full effort.',
+    ];
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: FractionallySizedBox(
+          heightFactor: 0.82,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Possible explanations',
+                  style: Theme.of(context).textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                const _ExplanationGroup(
+                  title: 'When performance is above usual',
+                  explanations: aboveExplanations,
+                ),
+                const SizedBox(height: 8),
+                const _ExplanationGroup(
+                  title: 'When performance is below usual',
+                  explanations: belowExplanations,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -202,23 +280,15 @@ class _ForceVelocityPlot extends StatelessWidget {
                               ),
                             ..._lineWidgets(
                               baselineOffsets,
-                              colors.outline,
+                              ForceVelocityChart._baselineColor,
                               dashed: true,
+                              thickness: 3.2,
                             ),
-                            ..._lineWidgets(currentOffsets, colors.primary),
-                            for (final point in currentOffsets)
-                              Positioned(
-                                left: point.dx - 3,
-                                top: point.dy - 3,
-                                child: Container(
-                                  width: 6,
-                                  height: 6,
-                                  decoration: BoxDecoration(
-                                    color: colors.primary,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                              ),
+                            ..._lineWidgets(
+                              currentOffsets,
+                              ForceVelocityChart._matchColor,
+                              thickness: 3.6,
+                            ),
                           ],
                         ),
                       );
@@ -233,12 +303,18 @@ class _ForceVelocityPlot extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(xMin.toStringAsFixed(1)),
+                Text(
+                  xMin.toStringAsFixed(1),
+                  key: const Key('force-velocity-x-min'),
+                ),
                 Text(
                   'Speed (m/s)',
                   style: Theme.of(context).textTheme.labelSmall,
                 ),
-                Text(xMax.toStringAsFixed(1)),
+                Text(
+                  xMax.toStringAsFixed(1),
+                  key: const Key('force-velocity-x-max'),
+                ),
               ],
             ),
           ),
@@ -251,6 +327,7 @@ class _ForceVelocityPlot extends StatelessWidget {
     List<Offset> points,
     Color color, {
     bool dashed = false,
+    double thickness = 2.5,
   }) {
     final widgets = <Widget>[];
     for (var index = 1; index < points.length; index++) {
@@ -268,13 +345,13 @@ class _ForceVelocityPlot extends StatelessWidget {
         widgets.add(
           Positioned(
             left: from.dx,
-            top: from.dy - 1.25,
+            top: from.dy - thickness / 2,
             child: Transform.rotate(
               alignment: Alignment.centerLeft,
               angle: math.atan2(segment.dy, segment.dx),
               child: Container(
                 width: segment.distance,
-                height: 2.5,
+                height: thickness,
                 decoration: BoxDecoration(
                   color: color,
                   borderRadius: BorderRadius.circular(2),
@@ -287,6 +364,41 @@ class _ForceVelocityPlot extends StatelessWidget {
     }
     return widgets;
   }
+}
+
+class _ExplanationGroup extends StatelessWidget {
+  const _ExplanationGroup({required this.title, required this.explanations});
+
+  final String title;
+  final List<String> explanations;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        title,
+        style: Theme.of(context).textTheme.titleSmall
+            ?.copyWith(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 8),
+      for (final explanation in explanations)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Icon(Icons.circle, size: 6),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Text(explanation)),
+            ],
+          ),
+        ),
+    ],
+  );
 }
 
 class _Legend extends StatelessWidget {

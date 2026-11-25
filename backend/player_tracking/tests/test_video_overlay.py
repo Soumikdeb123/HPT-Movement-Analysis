@@ -43,6 +43,8 @@ def test_video_has_per_frame_annotation_but_no_ghost_box(tmp_path):
         [imageio_ffmpeg.get_ffmpeg_exe(), "-i", str(output), "-f", "null", "-"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     assert probe.returncode == 0

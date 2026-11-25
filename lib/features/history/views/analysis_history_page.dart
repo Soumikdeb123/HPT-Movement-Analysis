@@ -474,12 +474,7 @@ class _AnalysisHistoryPageState extends State<AnalysisHistoryPage> {
                               ),
                               Text(entry.dateLabel),
                               Text(
-                                '${entry.targetPlayerLabel} · ${entry.statusLabel} · '
-                                '${entry.qualityStatus == 'good'
-                                    ? 'Good evidence'
-                                    : entry.qualityStatus == 'limited'
-                                    ? 'Limited evidence'
-                                    : 'Evidence unavailable'}',
+                                '${entry.targetPlayerLabel} · ${entry.statusLabel}',
                               ),
                               if (entry.summary.isNotEmpty) ...[
                                 const SizedBox(height: 12),

@@ -99,6 +99,7 @@ class AnalysisHistoryRepository {
     String method,
     String path, {
     Map<String, String>? query,
+    Object? body,
   }) async {
     final token = AuthRepository.token;
     if (token == null || token.isEmpty) {
@@ -115,6 +116,10 @@ class AnalysisHistoryRepository {
             )
             ..followRedirects = false
             ..headers['Authorization'] = 'Bearer $token';
+      if (body != null) {
+        request.headers['Content-Type'] = 'application/json';
+        request.body = jsonEncode(body);
+      }
       final response = await (() async {
         final streamed = await _client.send(request);
         return http.Response.fromStream(streamed);
@@ -182,6 +187,21 @@ class AnalysisHistoryRepository {
 
   Future<void> delete(String id) async {
     await _request('DELETE', '/api/analyses/${Uri.encodeComponent(id)}');
+  }
+
+  Future<SavedAnalysis> setMovementMomentExcluded(
+    String analysisId,
+    String eventId,
+    bool excluded,
+  ) async {
+    final snapshot = await _request(
+      'PATCH',
+      '/api/analyses/${Uri.encodeComponent(analysisId)}/movement-moments/'
+          '${Uri.encodeComponent(eventId)}',
+      body: {'excluded': excluded},
+    );
+    final entry = AnalysisHistoryEntry(snapshot);
+    return SavedAnalysis(entry, analysisResultFromSnapshot(snapshot, baseUri));
   }
 
   void close() {

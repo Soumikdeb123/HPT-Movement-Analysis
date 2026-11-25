@@ -259,7 +259,7 @@ class CourtDetector:
         # modest extrapolation outside the image; the model-support and
         # multi-frame checks still have to pass before metres are reported.
         points_inside_extended_frame = all(
-            -0.18 * width <= x <= 1.18 * width
+            -0.25 * width <= x <= 1.25 * width
             and 0.02 * height <= y <= 1.12 * height
             for x, y in corners
         )

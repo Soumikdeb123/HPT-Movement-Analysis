@@ -83,9 +83,9 @@ void main() {
           ),
         ),
       );
-      expect(find.text('Match Sprint Force–Velocity'), findsOneWidget);
+      expect(find.text('Movement Force–Velocity'), findsOneWidget);
       expect(
-        find.text('No valid sprint acceleration was identified in this video.'),
+        find.text('Movement Force–Velocity is unavailable for this video.'),
         findsOneWidget,
       );
       expect(find.byKey(const Key('force-velocity-chart')), findsNothing);

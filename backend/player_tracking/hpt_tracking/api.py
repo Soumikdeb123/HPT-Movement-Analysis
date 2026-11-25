@@ -75,7 +75,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["*"],
     )
     app.state.job_manager = manager
@@ -166,7 +166,6 @@ def create_app(
         player_id: Optional[str] = Form(None),
         target_player: str = Form("near"),
         athlete_mass_kg: Optional[float] = Form(None),
-        court_corners: Optional[str] = Form(None),
         user: str = Depends(authenticated_user),
     ) -> dict:
         if player_id is None:
@@ -192,39 +191,6 @@ def create_app(
                     f"{MAXIMUM_MASS_KG:.0f} kg."
                 ),
             )
-        parsed_court_corners = None
-        if court_corners is not None:
-            try:
-                parsed_court_corners = json.loads(court_corners)
-                valid_shape = (
-                    isinstance(parsed_court_corners, list)
-                    and len(parsed_court_corners) == 4
-                    and all(
-                        isinstance(point, list)
-                        and len(point) == 2
-                        and all(
-                            isinstance(value, (int, float))
-                            and not isinstance(value, bool)
-                            and 0.0 <= float(value) <= 1.0
-                            for value in point
-                        )
-                        for point in parsed_court_corners
-                    )
-                )
-            except (TypeError, ValueError, json.JSONDecodeError):
-                valid_shape = False
-            if not valid_shape:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        "Manual court calibration must contain four in-frame "
-                        "points in far-left, far-right, near-right, near-left order."
-                    ),
-                )
-            parsed_court_corners = [
-                [float(value) for value in point]
-                for point in parsed_court_corners
-            ]
         original_filename = Path(video.filename or "").name
         suffix = Path(original_filename).suffix.lower()
         if suffix not in ALLOWED_VIDEO_SUFFIXES:
@@ -284,7 +250,6 @@ def create_app(
             player_name=player["displayName"],
             target_player=target_player,
             athlete_mass_kg=athlete_mass_kg,
-            court_corners=parsed_court_corners,
             input_video=input_video.to_dict(),
             owner=user,
         )
@@ -347,6 +312,21 @@ def create_app(
         job = request.app.state.job_manager.cancel_job(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Analysis job was not found.")
+        return job.snapshot()
+
+    @app.patch("/api/analyses/{job_id}/movement-moments/{event_id}")
+    async def update_movement_moment(
+        request: Request, job_id: str, event_id: str,
+        payload: dict = Body(...), user: str = Depends(authenticated_user),
+    ) -> dict:
+        check_owner(job_id, user)
+        if not isinstance(payload.get("excluded"), bool):
+            raise HTTPException(status_code=422, detail="Choose whether to exclude this event.")
+        job = request.app.state.job_manager.set_movement_moment_excluded(
+            user, job_id, event_id, payload["excluded"]
+        )
+        if job is None:
+            raise HTTPException(status_code=404, detail="Movement moment was not found.")
         return job.snapshot()
 
     @app.delete("/api/analyses/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
