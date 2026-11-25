@@ -232,7 +232,7 @@ class CourtDetector:
         ]
         consistency = 1.0 - min(1.0, float(np.median(deviations)) / (0.05 * frame_diagonal))
         detection_rate = len({item[2] for item in winning_cluster}) / len(frame_list)
-        confidence = max(0.0, min(1.0, 0.55 * detection_rate + 0.45 * consistency))
+        confidence = max(0.0, min(1.0, 0.30 * detection_rate + 0.70 * consistency))
         return CourtCalibration(
             corners=selected_corners,
             homography=matrix,
@@ -268,7 +268,7 @@ class CourtDetector:
             and far_width >= 0.08 * width
             and near_width >= 0.45 * width
             and near_width > far_width * 1.1
-            and vertical_span >= 0.2 * height
+            and vertical_span >= 0.18 * height
             and polygon_area >= 0.12 * width * height
         )
 
