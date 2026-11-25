@@ -94,7 +94,7 @@ class CourtDetector:
                                    minLineLength=max(25, int(0.08 * height)), maxLineGap=8)
         if segments is None:
             return []
-        segments = segments[:, 0].astype(np.float64)
+        segments = np.asarray(segments, dtype=np.float64).reshape(-1, 4)
         lengths = np.hypot(segments[:, 2] - segments[:, 0], segments[:, 3] - segments[:, 1])
         tolerance = 0.006 * math.hypot(width, height) + 2.0
 

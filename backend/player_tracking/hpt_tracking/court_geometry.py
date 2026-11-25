@@ -165,7 +165,7 @@ class CourtDetector:
         ]
         consistency = 1.0 - min(1.0, float(np.median(deviations)) / (0.05 * frame_diagonal))
         detection_rate = len(detections) / len(frame_list)
-        confidence = max(0.0, min(1.0, 0.55 * detection_rate + 0.45 * consistency))
+        confidence = max(0.0, min(1.0, 0.30 * detection_rate + 0.70 * consistency))
         return CourtCalibration(
             corners=median_corners,
             homography=matrix,
