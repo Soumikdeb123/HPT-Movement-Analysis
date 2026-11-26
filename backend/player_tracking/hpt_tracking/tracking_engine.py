@@ -242,19 +242,32 @@ class YuchenPrototypeTrackingEngine:
             ) from error
 
         requested = self.inference_device.strip().lower()
+
         cuda_available = torch.cuda.is_available()
-        wants_cuda = requested in {"auto", "cuda", "cuda:0", "0"}
-        if wants_cuda and cuda_available:
+        mps_available = (
+            hasattr(torch.backends, "mps")
+            and torch.backends.mps.is_available()
+        )
+
+        if requested in {"auto", "cuda", "cuda:0", "0"} and cuda_available:
             self._device_argument = 0
             self._device_label = f"CUDA: {torch.cuda.get_device_name(0)}"
             return
-        if requested not in {"auto", "cpu"} and not cuda_available:
-            raise RuntimeError(
-                f"Inference device '{self.inference_device}' requested, but CUDA "
-                "is unavailable in the installed PyTorch build."
-            )
-        self._device_argument = "cpu"
-        self._device_label = "CPU"
+
+        if requested in {"auto", "mps", "mps:0"} and mps_available:
+            self._device_argument = "mps"
+            self._device_label = "Apple GPU (MPS)"
+            return
+
+        if requested in {"auto", "cpu"}:
+            self._device_argument = "cpu"
+            self._device_label = "CPU"
+            return
+
+        raise RuntimeError(
+            f"Inference device '{self.inference_device}' "
+            "is unavailable or unsupported."
+        )
 
     def _load_model(self):
         if self._model is None:
