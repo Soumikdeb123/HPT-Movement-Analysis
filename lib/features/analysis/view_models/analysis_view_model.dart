@@ -5,6 +5,7 @@ import '../models/analysis_result.dart';
 import '../repositories/analysis_gateway.dart';
 import '../repositories/http_analysis_gateway.dart';
 import '../services/analysis_video_picker.dart';
+import '../services/analysis_notifications.dart';
 import '../../players/models/player_profile.dart';
 
 enum AnalysisStatus {
@@ -142,6 +143,13 @@ class AnalysisViewModel extends ChangeNotifier {
     final cancellationToken = AnalysisCancellationToken();
     _cancellationToken = cancellationToken;
 
+    void markProcessing() {
+      if (status != AnalysisStatus.validating) return;
+      status = AnalysisStatus.processing;
+      AnalysisNotifications.show(AnalysisNotice.processing);
+    }
+
+    AnalysisNotifications.show(AnalysisNotice.validating);
     try {
       final completedResult = await _gateway.analyseVideo(
         AnalysisRequest(
@@ -155,16 +163,14 @@ class AnalysisViewModel extends ChangeNotifier {
         onVideoValidated: (metadata) {
           if (operationGeneration != _operationGeneration) return;
           validatedVideoMetadata = metadata;
-          status = AnalysisStatus.processing;
+          markProcessing();
           notifyListeners();
         },
         onProgress: (value) {
           if (operationGeneration != _operationGeneration) return;
           // Keep compatibility with older servers that do not return the new
           // metadata object, while still leaving the validation phase.
-          if (status == AnalysisStatus.validating) {
-            status = AnalysisStatus.processing;
-          }
+          markProcessing();
           progress = value.clamp(0, 1);
           notifyListeners();
         },
@@ -176,17 +182,21 @@ class AnalysisViewModel extends ChangeNotifier {
           completedResult.inputVideo ?? validatedVideoMetadata;
       progress = 1;
       status = AnalysisStatus.completed;
+      AnalysisNotifications.show(AnalysisNotice.completed);
     } on AnalysisCancelledException {
       if (operationGeneration != _operationGeneration) return;
       _resetFields();
+      AnalysisNotifications.clearProgress();
     } on AnalysisGatewayException catch (error) {
       if (operationGeneration != _operationGeneration) return;
       status = AnalysisStatus.failed;
       errorMessage = error.message;
+      AnalysisNotifications.show(AnalysisNotice.failed);
     } on Object catch (error) {
       if (operationGeneration != _operationGeneration) return;
       status = AnalysisStatus.failed;
       errorMessage = 'Analysis failed unexpectedly. $error';
+      AnalysisNotifications.show(AnalysisNotice.failed);
     }
 
     if (operationGeneration == _operationGeneration) {
@@ -199,14 +209,17 @@ class AnalysisViewModel extends ChangeNotifier {
     final cancellationToken = _cancellationToken;
     if (cancellationToken == null || !isProcessing || isCancelling) return;
 
+    final operationGeneration = ++_operationGeneration;
     status = AnalysisStatus.cancelling;
+    AnalysisNotifications.clearProgress();
     notifyListeners();
-    ++_operationGeneration;
     try {
       await _gateway.cancelAnalysis(cancellationToken);
+      if (operationGeneration != _operationGeneration) return;
       _cancellationToken = null;
       _resetFields();
     } on Object catch (error) {
+      if (operationGeneration != _operationGeneration) return;
       status = AnalysisStatus.failed;
       errorMessage = 'Could not cancel the analysis. $error';
     }
@@ -222,6 +235,7 @@ class AnalysisViewModel extends ChangeNotifier {
   }
 
   void reset() {
+    if (isProcessing) AnalysisNotifications.clearProgress();
     ++_operationGeneration;
     _cancellationToken?.requestCancellation();
     _cancellationToken = null;
@@ -248,6 +262,7 @@ class AnalysisViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (isProcessing) AnalysisNotifications.clearProgress();
     _disposed = true;
     ++_operationGeneration;
     _cancellationToken?.requestCancellation();
